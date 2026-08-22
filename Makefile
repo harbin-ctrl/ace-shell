@@ -766,7 +766,7 @@ $(BUILD)/Info: $(BUILD)/Info.o $(BUILD)/native_command_entry.o \
                $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
-$(BUILD)/LNX.o: $(INSTALL_LNX_SRC) | $(BUILD)
+$(BUILD)/LNX.o: $(INSTALL_LNX_SRC) src/lnx_pty.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(COMPAT) -c $< -o $@
 
 # The one place in ACE that decides an operation needs privilege.  Every

@@ -984,3 +984,23 @@ rewrite previous entries.
   signal test was run through `make break-signal-test` so its required probe
   is built first. No production behavior was changed; Chunk 1 remains the
   first implementation chunk.
+
+- Chunk 1 complete: added the opt-in `ACE_LNX_PTY=1` contract in
+  `src/lnx_pty.h`, implemented PTY allocation/session setup, sane termios,
+  bounded nonblocking full-duplex relay, child environment cleanup, inherited
+  descriptor cleanup, and exit/signal propagation in `src/lnx.c`, and extended
+  the existing probe/harness. The marker remains test-only as required; no
+  `RunCommand()` descriptor classification was added yet. Build:
+  `make -r /home/pi/repo/ace/build/LNX
+  /home/pi/repo/ace/build/ace-user-shell
+  /home/pi/repo/ace/build/ace-broker`. Tests:
+  `make -r test-lnx-pty test-shell-redirection break-signal-test
+  test-native-input test-native-console-handle test-console-channel
+  test-console-device-bridge test-shell-return-code`; all passed. The focused
+  test now verifies PTY descriptors, `TERM=xterm-256color`, session and
+  controlling-terminal identity, marker removal, line relay, output larger
+  than one relay buffer, normal statuses, signal termination, and unchanged
+  direct/redirection/not-found behavior. The only implementation deviation
+  from the proposed allocation sequence is that the slave is opened before
+  `fork()` and reused after `setsid()`; `TIOCSCTTY` and all child-side
+  terminal/session invariants are still established after `setsid()`.

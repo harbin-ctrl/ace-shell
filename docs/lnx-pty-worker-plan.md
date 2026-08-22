@@ -1068,5 +1068,6 @@ rewrite previous entries.
   shell regression set, and the broad handoff suite (`all` plus console,
   runtime, Exec, BOOPSI, and graphics tests) passed. The live acceptance test
   also now launches bare `LNX bash`, verifies `tty` and `stty size`, and exits
-  cleanly. Delivery install and final process quiescence remain the worker
-  handoff gates.
+  cleanly. The pushed tree was installed, including Vim, Regina, and LhA,
+  and the final exact executable-identity scan found no ACE shell, console,
+  broker, mediator, LNX, Regina, or Tine processes.

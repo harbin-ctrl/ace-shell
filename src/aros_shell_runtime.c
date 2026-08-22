@@ -120,7 +120,7 @@ static int find_command(const char *command, char *result, size_t result_size)
     if (shell_directory[0] &&
         find_in_directory(shell_directory, command, result, result_size) == 0)
         return 0;
-    /* Linux commands are available only through the explicit LNX command. */
+    /* Linux commands are available only through the explicit Linux command. */
     return -1;
 }
 

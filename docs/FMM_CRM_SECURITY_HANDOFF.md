@@ -17,7 +17,7 @@ ACE is an Amiga-like user interface for a Linux machine. The person using ACE
 should not have to understand Linux ownership, root as a login identity, or
 mountpoint topology in order to use normal AmigaDOS commands. ACE should feel
 like an Amiga environment, while Linux remains visible through the explicit
-`LNX` escape hatch.
+`Linux` escape hatch.
 
 The shell and broker are user-facing programs and must run as the logged-in
 user. They must use that user's desktop session, D-Bus session bus, Wayland or
@@ -153,10 +153,10 @@ then a failure has already summoned the CRM, and the comparison only chooses
 which root the CRM resolves beneath -- `RESOLVE_BENEATH` for a volume,
 `RESOLVE_IN_ROOT` for the host. That is containment.
 
-`LNX` children lose the device view. They are Linux processes outside the ACE
+`Linux` children lose the device view. They are Linux processes outside the ACE
 seam, so they will not see paths under the view root. Today they inherit it
 because everything is root and inside the namespace. This is consistent with
-`LNX` being an explicit escape hatch rather than an implicit privilege path,
+`Linux` being an explicit escape hatch rather than an implicit privilege path,
 but it is a behaviour change and is recorded here as one.
 
 ### User shell and console
@@ -365,12 +365,12 @@ broker protocol. It must not require rewriting every command.
 
 Current ACE source is not perfectly centralized. The migration must audit and
 route the direct host calls in `src/native_dos.c`, `src/ace_amiga_posix.c`,
-broker-side file operations, and any other shared wrappers. `LNX` is explicitly
+broker-side file operations, and any other shared wrappers. `Linux` is explicitly
 outside this model: it is an experimental Linux escape hatch, and a Linux
-program launched by `LNX` remains an ordinary unprivileged Linux user process,
+program launched by `Linux` remains an ordinary unprivileged Linux user process,
 with the host Linux filesystem view rather than ACE's device view. Its
 interactive PTY path is implemented, so a user who wants `sudo bash` may use
-`LNX sudo bash`; any elevation remains subject to the host's normal policy.
+`Linux sudo bash`; any elevation remains subject to the host's normal policy.
 
 Unmodified third-party code that bypasses ACE's DOS/POSIX seam is also outside
 automatic per-object elevation. That is desirable; do not add a dangerous
@@ -760,7 +760,7 @@ The following user decisions remain in force unless explicitly revisited:
 * commands are talky and report both success and failure with specific error
   numbers where possible;
 * atomicity matters for filesystem operations;
-* `LNX` is an explicit Linux escape hatch, not an implicit ACE privilege path;
+* `Linux` is an explicit Linux escape hatch, not an implicit ACE privilege path;
 * authorization is session-scoped: `--root` plus one authentication, until the
   session ends, `DROP_PRIVILEGE`, or an optional timeout that is off by
   default. ACE does not prompt per object, and must not be changed to;
@@ -791,7 +791,7 @@ The following user decisions remain in force unless explicitly revisited:
 * nothing in ACE may reach the filesystem outside the ACE seam. A component
   that opens a raw host path directly loses the device view silently, which is
   the worst way to lose it;
-* `LNX` children do not see the device view, and that is correct: `LNX` is an
+* `Linux` children do not see the device view, and that is correct: `Linux` is an
   escape hatch to Linux, and a Linux process gets Linux's view.
 
 The central security/product decision is now:

@@ -44,7 +44,7 @@ static const unsigned char ace_resize_disable[] = "\23312}";
 static int lnx_signal_pipe[2] = {-1, -1};
 
 /*
- * LNX is the deliberate escape hatch from the AmigaDOS command world.
+ * Linux is the deliberate escape hatch from the AmigaDOS command world.
  * It executes one Linux program directly. No shell is involved: arguments
  * are already separated by the AROS command line machinery, and the
  * inherited standard descriptors lead back to ACE's CON: stream.
@@ -157,7 +157,7 @@ static int set_nonblocking(int descriptor)
 /* PTY mode is selected only for ACE's full-duplex Unix console socket.  Use
  * per-call nonblocking I/O on that shared endpoint: changing O_NONBLOCK on
  * the inherited descriptor would also change the waiting ACE shell's open
- * file description, causing it to mistake EAGAIN for end-of-input after LNX
+ * file description, causing it to mistake EAGAIN for end-of-input after Linux
  * returns. */
 static ssize_t console_receive(int descriptor, void *bytes, size_t length)
 {
@@ -696,7 +696,7 @@ static void child_exec(const char *program, char **arguments, int master,
     if (exec_linux_program(program, arguments) < 0) {
         int saved_error = errno;
 
-        dprintf(STDERR_FILENO, "LNX: %s: %s\n", program,
+        dprintf(STDERR_FILENO, "Linux: %s: %s\n", program,
                 strerror(saved_error));
         _exit(RETURN_FAIL);
     }
@@ -1026,7 +1026,7 @@ static int supervise_pty(const char *program, char **arguments)
     static const unsigned char terminal_eof = LNX_EVENT_CTRL_D;
 
     if (open_pty_pair(&master, &slave) < 0) {
-        fprintf(stderr, "LNX: cannot allocate PTY: %s\n", strerror(errno));
+        fprintf(stderr, "Linux: cannot allocate PTY: %s\n", strerror(errno));
         return RETURN_FAIL;
     }
     if (initialize_pty_termios(slave) < 0 || set_nonblocking(master) < 0) {
@@ -1034,7 +1034,7 @@ static int supervise_pty(const char *program, char **arguments)
 
         close(slave);
         close(master);
-        fprintf(stderr, "LNX: cannot initialize PTY: %s\n", strerror(error));
+        fprintf(stderr, "Linux: cannot initialize PTY: %s\n", strerror(error));
         return RETURN_FAIL;
     }
     if (install_lnx_signal_handlers() < 0) {
@@ -1042,7 +1042,7 @@ static int supervise_pty(const char *program, char **arguments)
 
         close(slave);
         close(master);
-        fprintf(stderr, "LNX: cannot install PTY signal bridge: %s\n",
+        fprintf(stderr, "Linux: cannot install PTY signal bridge: %s\n",
                 strerror(error));
         return RETURN_FAIL;
     }
@@ -1053,7 +1053,7 @@ static int supervise_pty(const char *program, char **arguments)
         close(slave);
         close(master);
         close_lnx_signal_pipe();
-        fprintf(stderr, "LNX: cannot set PTY geometry: %s\n", strerror(error));
+        fprintf(stderr, "Linux: cannot set PTY geometry: %s\n", strerror(error));
         return RETURN_FAIL;
     }
     if (ace_input_feed(&input_parser, &input, typeahead.bytes,
@@ -1061,7 +1061,7 @@ static int supervise_pty(const char *program, char **arguments)
         close(slave);
         close(master);
         close_lnx_signal_pipe();
-        fprintf(stderr, "LNX: console typeahead exceeds relay buffer\n");
+        fprintf(stderr, "Linux: console typeahead exceeds relay buffer\n");
         return RETURN_FAIL;
     }
     if (write_control_sequence(ace_resize_enable,
@@ -1074,7 +1074,7 @@ static int supervise_pty(const char *program, char **arguments)
         close(slave);
         close(master);
         close_lnx_signal_pipe();
-        fprintf(stderr, "LNX: cannot fork PTY target: %s\n", strerror(error));
+        fprintf(stderr, "Linux: cannot fork PTY target: %s\n", strerror(error));
         return RETURN_FAIL;
     }
     if (child == 0)
@@ -1264,7 +1264,7 @@ int main(int argc, char **argv)
     const char *term_marker;
 
     if (argc < 2) {
-        fprintf(stderr, "LNX: command required\n");
+        fprintf(stderr, "Linux: command required\n");
         return RETURN_FAIL;
     }
 
@@ -1277,12 +1277,12 @@ int main(int argc, char **argv)
         (void)unsetenv(ACE_LNX_TARGET_TERM_VARIABLE);
         (void)unsetenv("COLORTERM");
         if (setenv("TERM", ACE_LNX_PTY_TERM, 1) != 0) {
-            fprintf(stderr, "LNX: cannot set TERM: %s\n", strerror(errno));
+            fprintf(stderr, "Linux: cannot set TERM: %s\n", strerror(errno));
             return RETURN_FAIL;
         }
     }
     if (exec_linux_program(argv[1], &argv[1]) == 0)
         return RETURN_OK;
-    fprintf(stderr, "LNX: %s: %s\n", argv[1], strerror(errno));
+    fprintf(stderr, "Linux: %s: %s\n", argv[1], strerror(errno));
     return RETURN_FAIL;
 }

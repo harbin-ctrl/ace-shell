@@ -133,7 +133,7 @@ AROS_UNALIAS_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Unalias.c
 AROS_FAILAT_SRC := $(AROS_ROOT)/workbench/c/shellcommands/FailAt.c
 AROS_WHY_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Why.c
 AROS_PROMPT_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Prompt.c
-INSTALL_LNX_SRC := src/lnx.c
+INSTALL_LINUX_SRC := src/lnx.c
 AROS_MAKEDIR_SRC := $(AROS_ROOT)/workbench/c/MakeDir.c
 MAKELINK_SRC := src/makelink.c
 AROS_JOIN_SRC := $(AROS_ROOT)/workbench/c/Join.c
@@ -390,7 +390,7 @@ AROS_BOOPSI_INCLUDES := -I$(CURDIR)/compat/aros-real/include \
 # The AmigaDOS commands: what a user types at the shell, and what SYS:C is a
 # drawer of. C: is the loader's last resort, so a command reachable by name
 AMIGA_COMMANDS := Echo CD Path PathPart Which Dir Peek Delete Protect Filenote Fault Ask Get Getenv Set Unset Alias Unalias Beep \
-                  FailAt Why Prompt Clip Cut MakeDir MakeLink Join Eval Edit Ed Info Copy List Sort Search Touch EndCLI Assign Relabel Type Rename Stack Run LNX NewCLI \
+                  FailAt Why Prompt Clip Cut MakeDir MakeLink Join Eval Edit Ed Info Copy List Sort Search Touch EndCLI Assign Relabel Type Rename Stack Run Linux NewCLI \
                   If Else EndIf EndSkip Lab Quit Skip Execute Setenv Unsetenv Wait Status Break Tally Shutdown Reboot LhA
 # The host side: a launcher, the console, the shell the console starts, and
 # the broker with its control tool. These are entry points into ACE rather
@@ -398,7 +398,7 @@ AMIGA_COMMANDS := Echo CD Path PathPart Which Dir Peek Delete Protect Filenote F
 HOST_BINS := ace-shell ace-user-shell ace-console ace-broker ace-brokerctl acepaste ace-fmm
 INSTALL_BINS := $(AMIGA_COMMANDS) $(HOST_BINS)
 
-all: $(BUILD)/Echo $(BUILD)/CD $(BUILD)/Path $(BUILD)/PathPart $(BUILD)/Which $(BUILD)/Dir $(BUILD)/Peek $(BUILD)/Delete $(BUILD)/Protect $(BUILD)/Filenote $(BUILD)/Fault $(BUILD)/Ask $(BUILD)/Get $(BUILD)/Getenv $(BUILD)/Set $(BUILD)/Unset $(BUILD)/Alias $(BUILD)/Unalias $(BUILD)/Beep $(BUILD)/FailAt $(BUILD)/Why $(BUILD)/Prompt $(BUILD)/Clip $(BUILD)/Cut $(BUILD)/MakeDir $(BUILD)/MakeLink $(BUILD)/Join $(BUILD)/Eval $(BUILD)/Edit $(BUILD)/Ed $(BUILD)/Info $(BUILD)/Copy $(BUILD)/List $(BUILD)/Sort $(BUILD)/Search $(BUILD)/Touch $(BUILD)/EndCLI $(BUILD)/Assign $(BUILD)/Relabel $(BUILD)/Type $(BUILD)/Rename $(BUILD)/Stack $(BUILD)/Run $(BUILD)/LNX $(BUILD)/LhA $(BUILD)/ace-shell $(BUILD)/ace-user-shell $(BUILD)/ace-console $(BUILD)/NewCLI $(BUILD)/If $(BUILD)/Else $(BUILD)/EndIf $(BUILD)/EndSkip $(BUILD)/Lab $(BUILD)/Quit $(BUILD)/Skip $(BUILD)/Execute $(BUILD)/Setenv $(BUILD)/Unsetenv $(BUILD)/Wait $(BUILD)/Status $(BUILD)/Break $(BUILD)/Tally $(BUILD)/Shutdown $(BUILD)/Reboot $(BUILD)/ace-broker $(BUILD)/ace-fmm $(BUILD)/ace-brokerctl $(BUILD)/acepaste $(BUILD)/ace-amiga-posix.o $(BUILD)/exec_compat.o $(BUILD)/exec_compat_bindings.o $(BUILD)/aros-con-handler.o $(BUILD)/aros-con-support.o $(BUILD)/aros-exec-runtime.o $(BUILD)/aros-console-editor.o $(BUILD)/aros-boopsi-runtime.o $(AROS_BOOPSI_OBJS)
+all: $(BUILD)/Echo $(BUILD)/CD $(BUILD)/Path $(BUILD)/PathPart $(BUILD)/Which $(BUILD)/Dir $(BUILD)/Peek $(BUILD)/Delete $(BUILD)/Protect $(BUILD)/Filenote $(BUILD)/Fault $(BUILD)/Ask $(BUILD)/Get $(BUILD)/Getenv $(BUILD)/Set $(BUILD)/Unset $(BUILD)/Alias $(BUILD)/Unalias $(BUILD)/Beep $(BUILD)/FailAt $(BUILD)/Why $(BUILD)/Prompt $(BUILD)/Clip $(BUILD)/Cut $(BUILD)/MakeDir $(BUILD)/MakeLink $(BUILD)/Join $(BUILD)/Eval $(BUILD)/Edit $(BUILD)/Ed $(BUILD)/Info $(BUILD)/Copy $(BUILD)/List $(BUILD)/Sort $(BUILD)/Search $(BUILD)/Touch $(BUILD)/EndCLI $(BUILD)/Assign $(BUILD)/Relabel $(BUILD)/Type $(BUILD)/Rename $(BUILD)/Stack $(BUILD)/Run $(BUILD)/Linux $(BUILD)/LhA $(BUILD)/ace-shell $(BUILD)/ace-user-shell $(BUILD)/ace-console $(BUILD)/NewCLI $(BUILD)/If $(BUILD)/Else $(BUILD)/EndIf $(BUILD)/EndSkip $(BUILD)/Lab $(BUILD)/Quit $(BUILD)/Skip $(BUILD)/Execute $(BUILD)/Setenv $(BUILD)/Unsetenv $(BUILD)/Wait $(BUILD)/Status $(BUILD)/Break $(BUILD)/Tally $(BUILD)/Shutdown $(BUILD)/Reboot $(BUILD)/ace-broker $(BUILD)/ace-fmm $(BUILD)/ace-brokerctl $(BUILD)/acepaste $(BUILD)/ace-amiga-posix.o $(BUILD)/exec_compat.o $(BUILD)/exec_compat_bindings.o $(BUILD)/aros-con-handler.o $(BUILD)/aros-con-support.o $(BUILD)/aros-exec-runtime.o $(BUILD)/aros-console-editor.o $(BUILD)/aros-boopsi-runtime.o $(AROS_BOOPSI_OBJS)
 
 $(BUILD)/break-probe: tests/break_probe.c $(BUILD)/dos-runtime.o $(BUILD)/native_dos.o $(BUILD)/native_command.o $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) -I$(COMPAT) -Isrc $(filter-out %.h,$^) -o $@
@@ -445,7 +445,7 @@ break-signal-test: $(BUILD)/break-probe $(BUILD)/ace-user-shell
 	python3 tests/break_signal_test.py
 
 .PHONY: test-lnx-pty
-test-lnx-pty: $(BUILD)/LNX $(BUILD)/lnx-pty-probe $(BUILD)/ace-user-shell \
+test-lnx-pty: $(BUILD)/Linux $(BUILD)/lnx-pty-probe $(BUILD)/ace-user-shell \
 	$(BUILD)/ace-broker $(BUILD)/EndCLI
 	python3 tests/lnx_pty_test.py
 
@@ -767,7 +767,7 @@ $(BUILD)/Info: $(BUILD)/Info.o $(BUILD)/native_command_entry.o \
                $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
-$(BUILD)/LNX.o: $(INSTALL_LNX_SRC) src/lnx_pty.h | $(BUILD)
+$(BUILD)/Linux.o: $(INSTALL_LINUX_SRC) src/lnx_pty.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(COMPAT) -c $< -o $@
 
 # The one place in ACE that decides an operation needs privilege.  Every
@@ -1197,7 +1197,7 @@ $(BUILD)/Beep: $(BUILD)/Beep.o $(BUILD)/beep_entry.o \
 $(BUILD)/EndCLI: $(BUILD)/endcli.o $(DOS_RUNTIME_OBJ) $(BUILD)/native_dos.o $(BUILD)/native_command.o $(BUILD)/native_shcommand.o $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
-$(BUILD)/LNX: $(BUILD)/LNX.o
+$(BUILD)/Linux: $(BUILD)/Linux.o
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
 $(BUILD)/ed_tine.o: $(ACE_ED_SRC) | $(BUILD)
@@ -1625,6 +1625,7 @@ clean-lha:
 # previous install.
 install: all tine
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
+	$(RM) $(DESTDIR)$(BINDIR)/LNX
 	$(INSTALL) -m 0755 $(addprefix $(BUILD)/,$(INSTALL_BINS)) $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m 0755 "$(TINE_DIR)/tine" $(DESTDIR)$(BINDIR)/tine
 	$(INSTALL) -m 0755 broker-start broker-stop $(DESTDIR)$(BINDIR)
@@ -1635,6 +1636,7 @@ install: all tine
 	# nothing to put in them, which is what ACE is.
 	$(INSTALL) -d $(DESTDIR)$(SYSDIR)/C $(DESTDIR)$(SYSDIR)/S \
 	              $(DESTDIR)$(SYSDIR)/Prefs/Env-Archive
+	$(RM) $(DESTDIR)$(SYSDIR)/C/LNX
 	for command in $(AMIGA_COMMANDS); do \
 	    ln -sf $(BINDIR)/$$command $(DESTDIR)$(SYSDIR)/C/$$command; \
 	done

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise LNX's ACE-console PTY protocol and shell activation boundary."""
+"""Exercise Linux's ACE-console PTY protocol and shell activation boundary."""
 
 import errno
 import os
@@ -29,7 +29,7 @@ def fail(message, output=b""):
 
 
 def protocol_output(output):
-    """Return target output after removing LNX's public console protocol."""
+    """Return target output after removing Linux's public console protocol."""
     return (output.replace(BOUNDS_QUERY, b"")
                   .replace(RESIZE_ENABLE, b"")
                   .replace(RESIZE_DISABLE, b""))
@@ -40,7 +40,7 @@ def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
                geometry_responses=None, close_after_input=False,
                close_after_geometry=False, delay_output_read=0,
                signals_after_input=None, timeout=8):
-    """Run one LNX invocation against a responsive fake ACE console."""
+    """Run one Linux invocation against a responsive fake ACE console."""
     parent, child = socket.socketpair()
     process = None
     output = bytearray()
@@ -72,7 +72,7 @@ def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=1)
-                fail(f"socket LNX command timed out: {arguments}", bytes(output))
+                fail(f"socket Linux command timed out: {arguments}", bytes(output))
             if (input_started and not pending and chunk_index < len(chunks) and
                     now >= next_chunk_at):
                 pending.extend(chunks[chunk_index])
@@ -144,7 +144,7 @@ def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
         if process is not None and process.poll() is None:
             process.kill()
             process.wait(timeout=1)
-        fail(f"socket LNX command failed: {arguments}: {error}", captured)
+        fail(f"socket Linux command failed: {arguments}: {error}", captured)
     finally:
         parent.close()
         if child.fileno() >= 0:
@@ -163,7 +163,7 @@ def run_over_pty(lnx, probe):
             if remaining <= 0:
                 os.kill(pid, signal.SIGKILL)
                 os.waitpid(pid, 0)
-                fail("host-PTY LNX probe timed out", output)
+                fail("host-PTY Linux probe timed out", output)
             readable, _, _ = select.select([master], [], [], remaining)
             if not readable:
                 continue
@@ -190,7 +190,7 @@ def run_over_pty(lnx, probe):
         os.close(master)
     waited, status = os.waitpid(pid, 0)
     if waited != pid or not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
-        fail(f"host-PTY LNX probe exited with status {status}", output)
+        fail(f"host-PTY Linux probe exited with status {status}", output)
     return bytes(output)
 
 
@@ -213,11 +213,11 @@ def raw_bytes_line(payload):
 def test_isolated_supervisor(lnx, probe):
     baseline_status, baseline = run_socket(lnx, [probe], close_after_input=True)
     if baseline_status != 0 or b"isatty 0 0 0\n" not in baseline:
-        fail("unmarked socket-backed LNX changed its characterization", baseline)
+        fail("unmarked socket-backed Linux changed its characterization", baseline)
 
     host_pty = normalized(run_over_pty(lnx, probe))
     if b"isatty 1 1 1\n" not in host_pty:
-        fail("host-PTY LNX positive control did not expose tty descriptors",
+        fail("host-PTY Linux positive control did not expose tty descriptors",
              host_pty)
 
     pty_environment = os.environ.copy()
@@ -368,7 +368,7 @@ def test_isolated_supervisor(lnx, probe):
     )
     assert_protocol(exec_output, 1, context="PTY child exec failure")
     exec_output = normalized(protocol_output(exec_output))
-    if exec_status == 0 or b"LNX: /ace/lnx-pty-child-does-not-exist:" not in exec_output:
+    if exec_status == 0 or b"Linux: /ace/lnx-pty-child-does-not-exist:" not in exec_output:
         fail("PTY child exec failure was not reported or propagated",
              exec_output)
 
@@ -425,23 +425,23 @@ def test_isolated_supervisor(lnx, probe):
     )
     direct_output = normalized(direct.stdout + direct.stderr)
     if direct.returncode != 0 or b"term ace-sentinel\n" not in direct_output:
-        fail("direct LNX mode did not preserve the caller TERM", direct_output)
+        fail("direct Linux mode did not preserve the caller TERM", direct_output)
 
-    payload = b"LNX direct stream regression\n"
+    payload = b"Linux direct stream regression\n"
     completed = subprocess.run(
         [str(lnx), "/bin/cat"], input=payload, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, check=False,
     )
     if completed.returncode != 0 or completed.stdout != payload:
-        fail("direct LNX cat did not preserve stream bytes or status",
+        fail("direct Linux cat did not preserve stream bytes or status",
              completed.stdout + completed.stderr)
 
     missing = subprocess.run(
         [str(lnx), "/ace/lnx-characterization-command-does-not-exist"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
     )
-    if missing.returncode == 0 or b"LNX:" not in missing.stderr:
-        fail("missing direct LNX command did not fail diagnostically",
+    if missing.returncode == 0 or b"Linux:" not in missing.stderr:
+        fail("missing direct Linux command did not fail diagnostically",
              missing.stdout + missing.stderr)
 
 
@@ -480,10 +480,10 @@ def run_interactive_shell(repo, lnx, probe):
                 if socket_path.exists():
                     break
                 if broker.poll() is not None:
-                    fail("interactive LNX test broker exited before startup")
+                    fail("interactive Linux test broker exited before startup")
                 time.sleep(0.01)
             if not socket_path.exists():
-                fail("interactive LNX test broker did not start")
+                fail("interactive Linux test broker did not start")
 
             parent, child = socket.socketpair()
             shell = subprocess.Popen(
@@ -493,7 +493,7 @@ def run_interactive_shell(repo, lnx, probe):
             child.close()
             child = None
             parent.setblocking(False)
-            parent.sendall(b"LNX bash --noprofile --norc -i\n")
+            parent.sendall(b"Linux bash --noprofile --norc -i\n")
             output = bytearray()
             controls = bytearray()
             queries = 0
@@ -525,11 +525,11 @@ def run_interactive_shell(repo, lnx, probe):
                         controls[:] = scan[-(len(BOUNDS_QUERY) - 1):]
                         if queries and not bash_input_sent:
                             parent.sendall(
-                                b"export PS1='LNX-PTY> '\necho LNX-INTERACTIVE-OK\nexit\n"
+                                b"export PS1='Linux-PTY> '\necho Linux-INTERACTIVE-OK\nexit\n"
                             )
                             bash_input_sent = True
                         if (bash_input_sent and not endcli_sent and
-                                b"LNX-INTERACTIVE-OK" in output and
+                                b"Linux-INTERACTIVE-OK" in output and
                                 output.count(RESIZE_DISABLE) == 1):
                             parent.sendall(b"EndCLI\n")
                             # The fake socket has no GUI owner to close it
@@ -545,12 +545,12 @@ def run_interactive_shell(repo, lnx, probe):
                      bytes(output))
             if (queries != 1 or output.count(RESIZE_ENABLE) != 1 or
                     output.count(RESIZE_DISABLE) != 1 or
-                    b"LNX-INTERACTIVE-OK" not in output):
-                fail("RunCommand did not activate one interactive LNX PTY",
+                    b"Linux-INTERACTIVE-OK" not in output):
+                fail("RunCommand did not activate one interactive Linux PTY",
                      bytes(output))
             lower = bytes(output).lower()
             if b"no job control" in lower or b"cannot set terminal process group" in lower:
-                fail("interactive Bash did not acquire LNX job control",
+                fail("interactive Bash did not acquire Linux job control",
                      bytes(output))
         finally:
             if parent is not None:
@@ -621,7 +621,7 @@ class LiveShell:
             )
             child.close()
             self.parent.setblocking(True)
-            self.send(command or b"LNX bash --noprofile --norc -i\n")
+            self.send(command or b"Linux bash --noprofile --norc -i\n")
         except BaseException:
             self.close(force=True)
             raise
@@ -696,11 +696,11 @@ class LiveShell:
 
 def run_interactive_break_tests(repo, lnx, probe):
     fixture = LiveShell(repo, lnx, probe)
-    prompt = b"LNX-PTY> "
+    prompt = b"Linux-PTY> "
     try:
         fixture.wait_for(lambda output: fixture.queries >= 1,
                          message="Bash PTY query was not answered")
-        fixture.send(b"export PS1='LNX-'P'TY> '\nprintf 'BREAK-'R'-READY\\n'\n")
+        fixture.send(b"export PS1='Linux-'P'TY> '\nprintf 'BREAK-'R'-READY\\n'\n")
         fixture.wait_for(
             lambda output: b"BREAK-R-READY" in output and
             output.count(prompt) >= 2,
@@ -743,7 +743,7 @@ def run_interactive_break_tests(repo, lnx, probe):
         fixture.send(b"exit\n")
         fixture.wait_for(lambda output: output.count(RESIZE_DISABLE) == 1,
                          message="job-control Bash did not exit cleanly")
-        fixture.send(f"LNX {probe} bytes 2\n".encode())
+        fixture.send(f"Linux {probe} bytes 2\n".encode())
         fixture.wait_for(lambda output: fixture.queries >= 2,
                          message="raw-byte probe PTY query was not answered")
         time.sleep(0.5)
@@ -755,10 +755,10 @@ def run_interactive_break_tests(repo, lnx, probe):
             fixture.wait_for(lambda output: output.count(RESIZE_DISABLE) == 2,
                              message="raw-byte probe did not close its PTY")
 
-        fixture.send(b"LNX bash --noprofile --norc -i\n")
+        fixture.send(b"Linux bash --noprofile --norc -i\n")
         fixture.wait_for(lambda output: fixture.queries >= 3,
                          message="EOF Bash PTY query was not answered")
-        fixture.send(b"export PS1='LNX-'P'TY> '\nprintf 'EOF-'R'-READY\\n'\n")
+        fixture.send(b"export PS1='Linux-'P'TY> '\nprintf 'EOF-'R'-READY\\n'\n")
         fixture.wait_for(
             lambda output: b"EOF-R-READY" in output and output.count(prompt) >= 8,
             message="EOF Bash did not reach an empty prompt",
@@ -767,12 +767,16 @@ def run_interactive_break_tests(repo, lnx, probe):
         fixture.wait_for(lambda output: output.count(RESIZE_DISABLE) == 3,
                          message="SIGUSR2 did not deliver terminal EOF to Bash")
         if b"Shell: ***Break" in bytes(fixture.output):
-            fail("LNX Ctrl-D was misclassified as an ACE script break",
+            fail("Linux Ctrl-D was misclassified as an ACE script break",
                  bytes(fixture.output))
         fixture.send(b"EndCLI\n")
         fixture.parent.shutdown(socket.SHUT_WR)
-        fixture.wait_for(lambda output: fixture.shell.poll() is not None,
-                         timeout=5, message="ACE shell did not finish after EOF Bash")
+        deadline = time.monotonic() + 5
+        while fixture.shell.poll() is None and time.monotonic() < deadline:
+            fixture.pump()
+        if fixture.shell.poll() is None:
+            fail("ACE shell did not finish after EOF Bash",
+                 bytes(fixture.output))
         if fixture.shell.returncode != 0:
             fail(f"interactive break shell exited {fixture.shell.returncode}",
                  bytes(fixture.output))
@@ -781,7 +785,7 @@ def run_interactive_break_tests(repo, lnx, probe):
 
 
 def run_bare_bash_acceptance(repo, lnx, probe):
-    fixture = LiveShell(repo, lnx, probe, command=b"LNX bash\n")
+    fixture = LiveShell(repo, lnx, probe, command=b"Linux bash\n")
     prompt = b"BARE-PTY> "
     try:
         fixture.wait_for(lambda output: fixture.queries >= 1,
@@ -790,45 +794,45 @@ def run_bare_bash_acceptance(repo, lnx, probe):
         fixture.wait_for(
             lambda output: b"BARE-R-READY" in output and
             output.count(prompt) >= 2,
-            message="bare LNX bash did not infer interactive mode",
+            message="bare Linux bash did not infer interactive mode",
         )
         fixture.send(b"tty\nstty size\n")
         fixture.wait_for(
             lambda output: b"/dev/pts/" in output and b"30 100" in output,
-            message="bare LNX bash did not expose a usable PTY",
+            message="bare Linux bash did not expose a usable PTY",
         )
         fixture.send(b"exit\n")
         fixture.wait_for(lambda output: output.count(RESIZE_DISABLE) == 1,
-                         message="bare LNX bash did not exit cleanly")
+                         message="bare Linux bash did not exit cleanly")
 
         # Do not pre-queue the next command.  The ACE shell must remain alive
-        # while its console is idle after every LNX target, including a
+        # while its console is idle after every Linux target, including a
         # nonzero target; otherwise a leaked O_NONBLOCK flag turns EAGAIN into
         # an apparent shell EOF and races ahead of ordinary tests.
         time.sleep(0.5)
         if fixture.shell.poll() is not None:
-            fail("ACE shell exited when bare LNX bash returned",
+            fail("ACE shell exited when bare Linux bash returned",
                  bytes(fixture.output))
-        fixture.send(f"LNX {probe} exit 7\n".encode())
+        fixture.send(f"Linux {probe} exit 7\n".encode())
         fixture.wait_for(
             lambda output: fixture.queries >= 2 and
             output.count(RESIZE_DISABLE) == 2,
-            message="nonzero LNX target did not return to ACE shell",
+            message="nonzero Linux target did not return to ACE shell",
         )
         time.sleep(0.5)
         if fixture.shell.poll() is not None:
-            fail("ACE shell exited when nonzero LNX target returned",
+            fail("ACE shell exited when nonzero Linux target returned",
                  bytes(fixture.output))
-        fixture.send(f"LNX {probe} report\n".encode())
+        fixture.send(f"Linux {probe} report\n".encode())
         fixture.wait_for(
             lambda output: fixture.queries >= 3 and
             b"isatty 1 1 1" in output and
             output.count(RESIZE_DISABLE) == 3,
-            message="ACE shell did not accept LNX after prior targets",
+            message="ACE shell did not accept Linux after prior targets",
         )
         time.sleep(0.5)
         if fixture.shell.poll() is not None:
-            fail("ACE shell exited when successful LNX target returned",
+            fail("ACE shell exited when successful Linux target returned",
                  bytes(fixture.output))
 
         fixture.send(b"EndCLI\n")
@@ -890,16 +894,16 @@ def run_console_shutdown_test(repo, lnx, probe):
 
 def main():
     repo = pathlib.Path(__file__).resolve().parent.parent
-    lnx = repo / "build" / "LNX"
+    lnx = repo / "build" / "Linux"
     probe = repo / "build" / "lnx-pty-probe"
     if not lnx.exists() or not probe.exists():
-        fail("LNX PTY binaries are not built")
+        fail("Linux PTY binaries are not built")
     test_isolated_supervisor(lnx, probe)
     run_interactive_shell(repo, lnx, probe)
     run_bare_bash_acceptance(repo, lnx, probe)
     run_interactive_break_tests(repo, lnx, probe)
     run_console_shutdown_test(repo, lnx, probe)
-    print("LNX PTY protocol, activation, break translation, job control, and shutdown pass")
+    print("Linux PTY protocol, activation, break translation, job control, and shutdown pass")
 
 
 if __name__ == "__main__":

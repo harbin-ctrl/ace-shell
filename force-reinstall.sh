@@ -12,7 +12,7 @@ ace_names=(
     ace-shell ace-user-shell ace-console ace-broker ace-brokerctl
     Echo CD PathPart Dir Delete Protect Filenote Fault Ask Get Getenv Set Unset
     Alias Unalias FailAt Why Prompt MakeDir EndCLI Assign Type Rename Stack Run
-    LNX NewCLI If Else EndIf Execute Setenv Unsetenv Copy List Touch Relabel LhA vim broker-start broker-stop
+    Linux LNX NewCLI If Else EndIf Execute Setenv Unsetenv Copy List Touch Relabel LhA vim broker-start broker-stop
 )
 
 as_root()

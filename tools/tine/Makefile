@@ -1,7 +1,8 @@
 CC        := ccache gcc
 STANDARDS := -D_POSIX_C_SOURCE=200908L -D_XOPEN_SOURCE=600 -D_XOPEN_SOURCE_EXTENDED
 # TINE is an ACE command.  Its executable is still a host process (ACE runs
-# it through LNX), but pathname semantics come from ACE's live DOS session.
+# it through the Linux command), but pathname semantics come from ACE's live
+# DOS session.
 # Keep the resolver in ACE rather than growing a second broker client here.
 ACE_DIR   ?= $(abspath ../..)
 ACE_BUILD ?= $(ACE_DIR)/build

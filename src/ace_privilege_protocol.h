@@ -28,9 +28,9 @@
  * whole design -- see the note above the access class for why that matters
  * more here than it would in a system that re-authorised every operation.
  *
- * LNX is outside all of this.  A Linux program started through LNX is a
+ * The `Linux` command is outside all of this.  A program started through it is a
  * Linux user process and stays one; a user who wants a root shell runs
- * "LNX sudo bash" and gets exactly what they asked for, visibly, through the
+ * "Linux sudo bash" and gets exactly what they asked for, visibly, through the
  * escape hatch that exists to be visible.
  */
 

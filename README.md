@@ -271,42 +271,42 @@ and `fatlabel` for VFAT, while a tmpfs-backed synthetic `RAM:` volume gets a
 live ACE-only label for the lifetime of the broker. Other filesystem types
 return the AmigaDOS "action not known" error.
 
-LNX is the explicit Linux escape hatch. It executes the named Linux program
+`Linux` is the explicit Linux escape hatch. It executes the named Linux program
 directly with `execv()` and an explicit PATH search, passing the remaining
 arguments unchanged; it never invokes a shell. In a live interactive ACE
-console with unredirected input and output, the official `LNX` command starts
+console with unredirected input and output, the official `Linux` command starts
 the Linux target on a private PTY, so interactive programs work as terminals:
 
-    LNX /usr/bin/uname -a
-    LNX printf hello
-    LNX bash
-    LNX bash --noprofile --norc -i
+    Linux /usr/bin/uname -a
+    Linux printf hello
+    Linux bash
+    Linux bash --noprofile --norc -i
 
 That PTY uses `TERM=xterm-256color`, receives the current ACE console size and
 resize notifications, and translates ACE navigation keys to the corresponding
-xterm input sequences. A bare `LNX bash` is therefore interactive: Bash sees a
+xterm input sequences. A bare `Linux bash` is therefore interactive: Bash sees a
 controlling terminal, and Ctrl-C, Ctrl-D, Ctrl-Z, `jobs`, and `fg` have their
 normal terminal meanings. Ctrl-D at an empty Linux prompt exits that target;
 ordinary ACE script Ctrl-D remains the ACE shell's own script boundary. When
-any LNX target exits, including one that reports a nonzero status, control
+any Linux target exits, including one that reports a nonzero status, control
 returns to the same ACE shell. Only an explicit ACE `EndCLI` ends that shell.
-ACE's historical console has no xterm SGR renderer, so LNX reduces color
+ACE's historical console has no xterm SGR renderer, so Linux reduces color
 attributes to ordinary text and maps clears/alternate-screen transitions to
 ACE's native clear behavior. It does not advertise or pass through truecolor.
 
 The PTY target remains an ordinary Linux process running as the logged-in
 Linux user. It sees the host Linux filesystem and user permissions, not ACE's
 AmigaDOS Assign/device view, and the PTY does not grant FMM/CRM privilege.
-`LNX sudo bash` is still an explicit host-side privilege request subject to
+`Linux sudo bash` is still an explicit host-side privilege request subject to
 the host's normal policy.
 
 Any AmigaDOS redirection (`<`, `>`, or `>>`), a piped/scripted shell, separate
-console endpoints, or a nonexportable `CON:` handle stays on LNX's direct
+console endpoints, or a nonexportable `CON:` handle stays on Linux's direct
 descriptor path. That preserves byte-exact noninteractive behavior; official
-LNX invocations still give their Linux target `TERM=xterm-256color`, while a
-standalone `./build/LNX` preserves the caller's TERM. There is no automatic
+Linux invocations still give their Linux target `TERM=xterm-256color`, while a
+standalone `./build/Linux` preserves the caller's TERM. There is no automatic
 host-command fallback. An unrecognized command is an AmigaDOS command failure.
-LNX is the deliberate mechanism for running a Linux command.
+`Linux` is the deliberate mechanism for running a Linux command.
 
 The broker now performs a read-only discovery pass over host block devices
 when it starts. Filesystem-bearing devices are registered in the initial ACE

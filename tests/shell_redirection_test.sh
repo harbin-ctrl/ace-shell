@@ -44,9 +44,11 @@ fail()
 
 mkdir -p "$sys_dir/C" "$sys_dir/S" "$sys_dir/Prefs/Env-Archive" \
          "$runtime_dir/ace/t"
-cp "$repo_dir/build/Type" "$repo_dir/build/LNX" "$repo_dir/build/EndCLI" \
+cp "$repo_dir/build/Type" "$repo_dir/build/Linux" "$repo_dir/build/Alias" \
+   "$repo_dir/build/EndCLI" \
    "$repo_dir/build/lnx-pty-probe" \
    "$sys_dir/C/"
+cp "$repo_dir/data/Shell-Startup" "$sys_dir/S/Shell-Startup"
 ACE_SYS_DIR="$sys_dir" XDG_RUNTIME_DIR="$runtime_dir" \
     "$repo_dir/build/ace-broker" "$socket_path" &
 broker_pid=$!
@@ -64,8 +66,8 @@ printf 'restored\n' > "$restored"
 printf '%s\n' \
     "Type $test_path/first > $test_path/output" \
     "Type $test_path/second >> $test_path/output" \
-    "LNX cat < $test_path/output > $test_path/copy" \
-    "LNX $probe_path report > $test_path/lnx-report" \
+    "Linux cat < $test_path/output > $test_path/copy" \
+    "Lx $probe_path report > $test_path/lnx-report" \
     'EndCLI' |
     ACE_BROKER_SOCKET="$socket_path" ACE_SESSION=shell-redirection \
     ACE_SYS_DIR="$sys_dir" XDG_RUNTIME_DIR="$runtime_dir" \
@@ -75,11 +77,11 @@ printf '%s\n' \
 cmp "$expected" "$output" || fail '> and >> did not produce the expected file'
 cmp "$expected" "$copy" || fail '< and > did not connect the command streams'
 grep -q '^isatty 0 0 0$' "$lnx_report" ||
-    fail 'piped shell unexpectedly activated LNX PTY mode'
+    fail 'piped shell unexpectedly activated Linux PTY mode'
 grep -q '^term xterm-256color$' "$lnx_report" ||
-    fail 'official redirected LNX did not select the Debian xterm TERM contract'
+    fail 'official redirected Linux did not select the Debian xterm TERM contract'
 grep -q '^pty-marker (unset)$' "$lnx_report" ||
-    fail 'redirected LNX leaked the private PTY marker to its target'
+    fail 'redirected Linux leaked the private PTY marker to its target'
 
 # A failed redirection prevents its command from running, then the shell
 # returns to its normal streams for the command that follows.

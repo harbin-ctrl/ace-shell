@@ -41,18 +41,18 @@ Wayland/GTK window.
 
 The real AROS `EndCLI.c` is included. Its state change is carried across the
 child command process and stops the parent shell. Ordinary host commands are
-not searched through `PATH`; `LNX` is the explicit direct Linux executable
+not searched through `PATH`; `Linux` is the explicit direct Linux executable
 escape hatch.
 
-### LNX interactive PTY boundary
+### Linux interactive PTY boundary
 
-When the official `LNX` command is launched from the live ACE console with the
+When the official `Linux` command is launched from the live ACE console with the
 same unredirected console endpoint for input and output, `RunCommand()` marks
 that invocation for PTY mode. The resulting process tree is:
 
 ```text
 ace-user-shell
-  -> LNX supervisor (owns the PTY master and relay queues)
+  -> Linux supervisor (owns the PTY master and relay queues)
        -> Linux target (new session, PTY slave, controlling terminal)
 ```
 
@@ -69,7 +69,7 @@ given `TERM=xterm-256color` and no `COLORTERM` claim that ACE cannot render.
 
 The ACE shell's break bridge sends Ctrl-C, Ctrl-D, Ctrl-E, and Ctrl-F events to
 the supervisor, which writes the corresponding terminal bytes to the PTY.
-Ctrl-D is treated as a PTY input byte only for this LNX foreground kind; the
+Ctrl-D is treated as a PTY input byte only for this Linux foreground kind; the
 ordinary ACE shell still treats it as a script boundary. The supervisor
 tracks the PTY foreground process group so Ctrl-C/Ctrl-Z and shell job control
 reach the active Linux job. On target exit it drains unread PTY output before
@@ -81,7 +81,7 @@ EOF. Console loss and supervisor signals use bounded HUP/TERM/KILL cleanup of
 the target and its foreground group.
 
 AmigaDOS redirection, pipes/scripts, split endpoints, and nonexportable
-`CON:` handles deliberately stay on LNX's direct descriptor path. They do not
+`CON:` handles deliberately stay on Linux's direct descriptor path. They do not
 receive a PTY, keyboard translation, or interactive `TERM` contract; direct
 mode is the byte-preserving Linux escape hatch for those cases.
 

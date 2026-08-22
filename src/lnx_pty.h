@@ -5,7 +5,7 @@
  * RunCommand() will set this private marker only when all three selected
  * command streams are the live ACE console. Chunk 1's isolated test harness
  * sets it directly; later chunks move the production decision into the
- * command runner. LNX removes it before execing the Linux target.
+ * command runner. The Linux command removes it before execing the target.
  */
 #define ACE_LNX_PTY_VARIABLE "ACE_LNX_PTY"
 #define ACE_LNX_PTY_VALUE "1"

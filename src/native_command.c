@@ -72,7 +72,7 @@ static void shell_break_handler(int signal_number)
                           signal_number == SIGRTMIN + 1 ? 'F' : 0;
 
     /* Ctrl-D is the CLI's script boundary unless the foreground process is
-       an LNX host terminal.  In the latter case it is an input byte for the
+       a Linux-command host terminal.  In the latter case it is an input byte for the
        PTY, just like the other host-signal bridge events. */
     if (signal_number == SIGUSR2 && kind != ACE_SHELL_FOREGROUND_LNX)
         shell_script_break_handler(signal_number);
@@ -260,7 +260,7 @@ int native_command_path(const char *name, char *result, size_t result_size)
          * beside the running binary, which is how ACE recognised its own
          * before it had a C: to ask, and which still covers an uninstalled
          * build tree. Anything else is an arbitrary path on the host, and
-         * arbitrary host programs go through LNX, deliberately.
+         * arbitrary host programs go through Linux, deliberately.
          */
         if (native_broker_resolve_path(name, resolved, sizeof(resolved)) == 0 &&
             (named_through_command_drawer(name) ||
@@ -312,7 +312,7 @@ int native_command_path(const char *name, char *result, size_t result_size)
     }
 
     /* The host PATH is deliberately not an AmigaDOS command path. Linux
-       programs must be invoked explicitly through LNX. */
+       programs must be invoked explicitly through Linux. */
     return -1;
 }
 
@@ -457,9 +457,9 @@ static int native_command_has_basename(const struct ace_command_segment *segment
     return strcasecmp(basename, name) == 0;
 }
 
-static int native_command_is_lnx(const struct ace_command_segment *segment)
+static int native_command_is_linux(const struct ace_command_segment *segment)
 {
-    return native_command_has_basename(segment, "LNX");
+    return native_command_has_basename(segment, "Linux");
 }
 
 static int native_command_is_endcli(const struct ace_command_segment *segment)
@@ -754,12 +754,12 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
        contributes the same endpoint on both sides; files, pipes, separate
        consoles, and abstract CON: handles do not satisfy this complete
        predicate.  The descriptor checks are intentionally before fork so a
-       PTY is chosen only when LNX can inherit both sides of this bridge. */
+       PTY is chosen only when Linux can inherit both sides of this bridge. */
     selected_input = Input();
     selected_output = Output();
     input_descriptor = ace_dos_handle_descriptor(selected_input);
     output_descriptor = ace_dos_handle_descriptor(selected_output);
-    lnx_command = native_command_is_lnx(segment);
+    lnx_command = native_command_is_linux(segment);
     lnx_pty_mode = native_console_session_active() && lnx_command &&
                    input_descriptor >= 0 && output_descriptor >= 0 &&
                    native_console_same_endpoint(selected_input, selected_output);

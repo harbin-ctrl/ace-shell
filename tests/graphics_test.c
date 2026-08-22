@@ -298,7 +298,7 @@ static void test_write_to_console_ansi(void)
     assert(!cell_has_ink(buf, 3, 0));
     free(buf);
 
-    /* This is the stream LNX hands to the real AROS parser after adapting
+    /* This is the stream Linux hands to the real AROS parser after adapting
        xterm's CSI 2J and alternate-screen transitions into ACE's native
        home-and-erase form.  xterm SGR (ordinary, 8/16-color, and indexed)
        has deliberately been removed before this seam because stdconclass

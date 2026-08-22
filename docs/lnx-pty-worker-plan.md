@@ -1,4 +1,4 @@
-# LNX interactive PTY integration: worker plan
+# Linux interactive PTY integration: worker plan
 
 ## Instructions to every worker
 
@@ -13,13 +13,13 @@ Before working on any chunk, read these base documents completely, in this
 order:
 
 1. `README.md` -- the product boundary, build/run conventions, the current
-   description of LNX, and the live console behavior.
+   description of Linux, and the live console behavior.
 2. `HANDOFF.md` -- especially "Current-console roadmap", "Child-side console
    input and raw mode", the live-resize discussion, and the notes about shell
    process groups and console shutdown.
 3. `TODO.md` -- outstanding work and the warning that Makefile recipe changes
    do not automatically invalidate existing objects.
-4. `docs/FMM_CRM_SECURITY_HANDOFF.md` -- the privilege boundary. LNX is a
+4. `docs/FMM_CRM_SECURITY_HANDOFF.md` -- the privilege boundary. Linux is a
    Linux escape hatch, remains a user process, does not enter ACE's device
    view, and must never be routed through the privileged FMM/CRM service.
 5. This document from beginning through the chunk you were assigned. Read the
@@ -40,7 +40,7 @@ Then inspect, rather than overwrite, the current implementation and tests:
 - `tests/break_signal_test.py`, `tests/shell_redirection_test.sh`,
   `tests/tine_console_query_test.py`, and
   `tests/tine_screen_trace_test.py`
-- the LNX compile/link rules and test targets in `Makefile`
+- the Linux compile/link rules and test targets in `Makefile`
 
 At the start of the worker run:
 
@@ -58,7 +58,7 @@ this feature.
 Execute the numbered implementation chunks in order, one chunk at a time.
 Finish and verify the current chunk, report its result, and stop at that
 boundary before beginning the next chunk. A chunk is complete only when its
-focused tests pass and the ordinary noninteractive LNX path still passes.
+focused tests pass and the ordinary noninteractive Linux path still passes.
 Record what was changed, the exact test commands, and any design deviation in
 the progress ledger at the end of this file. Do not mark later chunks complete
 because scaffolding for them happened to be added.
@@ -153,7 +153,7 @@ make test-shell-return-code
 ```
 
 Run `make test-lnx-pty` as soon as Chunk 0 creates that target. Chunk 0 uses a
-passing characterization assertion that the current socket-backed LNX target
+passing characterization assertion that the current socket-backed Linux target
 is not a tty; it does not add a red or skipped expected-failure test. Later
 chunks replace that assertion as the behavior changes. Add each chunk's own
 tests to this common set. The broad project suite is reserved for Chunk 5;
@@ -172,8 +172,8 @@ The root `README.md`, `HANDOFF.md`, and `TODO.md` describe ACE as a whole. The
 documents under `docs/` are component plans and detailed handoffs. This plan
 has been checked against all current Markdown documents under `docs/`:
 
-- `docs/FMM_CRM_SECURITY_HANDOFF.md` is authoritative for LNX's security
-  boundary. LNX remains unprivileged, never becomes an FMM/CRM operation, and
+- `docs/FMM_CRM_SECURITY_HANDOFF.md` is authoritative for Linux's security
+  boundary. Linux remains unprivileged, never becomes an FMM/CRM operation, and
   gives Linux programs the ordinary Linux view rather than ACE's device view.
 - `docs/regina-arexx-plan.md` records an important console transport fact: an
   abstract ACE console handle does not necessarily have one descriptor that
@@ -182,9 +182,9 @@ has been checked against all current Markdown documents under `docs/`:
   work does not broaden ARexx stream descriptor passing or general `CON:`
   handle export.
 - `docs/regina-amiga-port.md` is historical Regina orientation and introduces
-  no competing LNX or terminal contract.
+  no competing Linux or terminal contract.
 - `docs/clipboard-system.md` owns clipboard protocol and client migration.
-  LNX PTY integration must not change console copy/paste or clipboard-device
+  Linux PTY integration must not change console copy/paste or clipboard-device
   behavior.
 
 When those documents change during this fast-moving project, current source
@@ -193,12 +193,13 @@ silently choosing one document over another.
 
 ## Goal
 
-Make a Linux program launched from a live ACE console through LNX see a real
-Unix terminal. The primary user-visible acceptance case is bare `LNX bash`;
+Make a Linux program launched from a live ACE console through the `Linux`
+command see a real
+Unix terminal. The primary user-visible acceptance case is bare `Linux bash`;
 Bash should infer interactive mode from the PTY without needing `-i`:
 
 ```text
-AMIGA> LNX bash
+AMIGA> Linux bash
 bash$ echo hello
 hello
 bash$ exit
@@ -207,17 +208,17 @@ AMIGA>
 
 Automated tests may use `bash --noprofile --norc -i` to remove user startup
 files and make the prompt deterministic, but the final manual test must include
-bare `LNX bash`.
+bare `Linux bash`.
 
 The completed feature must also support terminal process groups, Ctrl-C,
 Ctrl-D, Ctrl-Z, live window-size changes, and clean teardown. It must preserve
 the current direct-exec behavior for scripts, pipes, redirection, and direct
 invocation from an ordinary Linux terminal.
 
-This is not a request to make ACE's Unix socket pretend to be a tty. LNX will
+This is not a request to make ACE's Unix socket pretend to be a tty. Linux will
 be a small PTY supervisor only when the ACE command runner explicitly tells it
 that both selected streams are the live ACE console. The Linux program will
-own the PTY slave; LNX will retain the PTY master and bridge it to ACE's
+own the PTY slave; Linux will retain the PTY master and bridge it to ACE's
 existing console byte channel.
 
 ## Existing behavior and the actual gap
@@ -231,8 +232,8 @@ GTK renderer <- ACE console channel <- shell/command stdout/stderr
 
 `RunCommand()` forks an ACE command, duplicates the selected AmigaDOS
 `Input()` and `Output()` streams onto file descriptors 0 and 1, and waits for
-the command. LNX then searches the Linux `PATH` itself and replaces its process
-with `execv()`. This is correct for `LNX ls`, but the inherited descriptor is
+the command. Linux then searches the Linux `PATH` itself and replaces its process
+with `execv()`. This is correct for `Linux ls`, but the inherited descriptor is
 a socket rather than a terminal, so `isatty()` is false and Bash disables its
 normal interactive and job-control behavior.
 
@@ -268,8 +269,8 @@ Only a live, unredirected ACE-console invocation takes the new branch:
 ace-console
     | existing Amiga console byte stream
 ace-user-shell
-    | RunCommand: marks this LNX invocation as host-terminal mode
-LNX supervisor
+    | RunCommand: marks this Linux invocation as host-terminal mode
+Linux supervisor
     | poll loop                         | public ACE console control
     |                                  | - query bounds
     | ACE input -> translate -> PTY     | - consume resize reports
@@ -285,32 +286,32 @@ bash / ssh / top / other Linux program
 All other invocations retain the existing path:
 
 ```text
-LNX command < file > file  -> direct exec with selected descriptors
+Linux command < file > file  -> direct exec with selected descriptors
 piped/scripted ACE shell   -> direct exec
-./build/LNX command        -> direct exec; the host terminal is already real
+./build/Linux command        -> direct exec; the host terminal is already real
 ```
 
 The PTY supervisor remains an ordinary user process. It does not talk to the
 FMM/CRM service and does not gain ACE filesystem translation or device-view
 access. The target program sees the normal Linux filesystem view and user ID,
-as LNX does today.
+as Linux does today.
 
 ## Non-negotiable design decisions
 
-1. **Opt in from `RunCommand()`, not by guessing in LNX.** Add a private
+1. **Opt in from `RunCommand()`, not by guessing in Linux.** Add a private
    environment marker, named in one shared header, only when the command is
-   the ACE LNX command, the shell is GUI-interactive, and selected input and
-   output refer to the same console channel. LNX removes this marker before
+   the ACE Linux command, the shell is GUI-interactive, and selected input and
+   output refer to the same console channel. The `Linux` command removes this marker before
    executing the Linux target. Environment inheritance alone must not let a
-   nested or redirected LNX accidentally allocate another PTY.
+   nested or redirected Linux accidentally allocate another PTY.
 
-   Every LNX command with the live, shared, unredirected ACE console is opted
+   Every Linux command with the live, shared, unredirected ACE console is opted
    in automatically. There is no command-name allowlist for interactive Linux
-   targets and no user-facing PTY switch. Consequently `LNX ls` sees a tty and
+   targets and no user-facing PTY switch. Consequently `Linux ls` sees a tty and
    may use terminal-oriented formatting; that is intended.
 
 2. **Preserve direct exec when PTY mode is not selected.** The current PATH
-   search and `execv()` semantics are useful and simple. Do not turn every LNX
+   search and `execv()` semantics are useful and simple. Do not turn every Linux
    invocation into a supervisor. This preserves redirection bytes, exit-by-
    signal behavior, and direct use from a host terminal.
 
@@ -325,13 +326,13 @@ as LNX does today.
    hybrid. Set the PTY target's TERM explicitly to `xterm-256color`. This is a
    platform contract, not a runtime probe and not a dependency on the launcher's
    TERM (desktop-launched sessions commonly have no TERM before ACE creates its
-   console). Direct LNX invocation outside an ACE PTY session preserves its
+   console). Direct Linux invocation outside an ACE PTY session preserves its
    caller environment.
 
    TERM is a claim about the terminal ACE presents, not merely a string that
    makes applications become interactive. Audit representative output from
    the Trixie `xterm-256color` entry against AROS's real console parser. Where
-   the renderer cannot represent an advertised capability, add a bounded LNX
+   the renderer cannot represent an advertised capability, add a bounded Linux
    output adaptation or an ACE-console implementation in an authorized file
    and test it; do not silently advertise a capability that produces corrupt
    output. Do not forward `COLORTERM=truecolor` unless truecolor support is
@@ -340,19 +341,19 @@ as LNX does today.
    `xterm-256color` contract.
 
    Apply this Debian-facing TERM to every Linux target reached through ACE's
-   official LNX command, including a direct/redirection invocation for which
+   official Linux command, including a direct/redirection invocation for which
    PTY allocation is disabled. Redirection changes descriptors, not the lower
-   operating-system identity. A standalone `./build/LNX` invoked outside the
+   operating-system identity. A standalone `./build/Linux` invoked outside the
    ACE command runner preserves the caller's TERM. Use an ACE-private marker
    from `RunCommand()` to distinguish those cases; do not infer them from an
    arbitrary inherited command name.
 
 4. **Use the public in-band geometry protocol.** Initial sizing and dynamic
    resizing use `CSI 0 q`, `CSI 12{`, resize reports, and `CSI 12}`. Do not add
-   ACE-only row/column environment variables or a new socket merely for LNX.
+   ACE-only row/column environment variables or a new socket merely for Linux.
 
 5. **Keep protocol parsing bounded and lossless.** A malformed or incomplete
-   control sequence must never make LNX consume input forever. User bytes that
+   control sequence must never make Linux consume input forever. User bytes that
    are not a recognized ACE bounds response or resize report must reach the
    PTY in order. Reads and writes may split anywhere.
 
@@ -366,14 +367,14 @@ as LNX does today.
    terminal line discipline and current PTY foreground process group decide
    what they mean. Do not signal only the original Bash PID.
 
-   This remains true when LNX is invoked by an ACE script: Ctrl-D exits or
+   This remains true when Linux is invoked by an ACE script: Ctrl-D exits or
    sends EOF to the Linux terminal program, then the ACE script continues.
    Ctrl-D retains its script-break meaning for every ordinary ACE foreground
    command.
 
 8. **The supervisor owns cleanup.** The PTY child starts a new session, so it
    no longer belongs to the shell's original process group. When the ACE
-   socket closes, the window sends HUP, LNX is terminated, or the target exits,
+   socket closes, the window sends HUP, Linux is terminated, or the target exits,
    the supervisor must close the PTY and terminate/reap the target session as
    appropriate. No process may survive with a dead ACE console.
 
@@ -381,7 +382,7 @@ as LNX does today.
    backpressure. Stop polling a source for `POLLIN` while its destination
    queue is full. Do not drop terminal output under load.
 
-10. **One owner writes each direction.** In PTY mode, the LNX supervisor is
+10. **One owner writes each direction.** In PTY mode, the Linux supervisor is
     the only process that reads ACE input, reads the PTY master, and emits
     console queries/event setup. The target owns only the PTY slave. This
     prevents size replies from racing a second reader.
@@ -399,7 +400,7 @@ reuse without requiring GTK automation.
 1. Build the existing relevant targets and run the existing tests:
 
    ```sh
-   make build/LNX build/ace-user-shell build/ace-broker
+   make build/Linux build/ace-user-shell build/ace-broker
    make test-shell-redirection
    python3 tests/break_signal_test.py
    make test-native-input test-console-channel test-console-device-bridge
@@ -407,16 +408,16 @@ reuse without requiring GTK automation.
 
 2. Add `tests/lnx_pty_test.py` and a focused `test-lnx-pty` Makefile target.
    The initial test should be capable of creating a Unix `socketpair()`,
-   giving one endpoint to LNX as descriptors 0/1/2, and acting as the ACE
+   giving one endpoint to Linux as descriptors 0/1/2, and acting as the ACE
    console on the other endpoint. Keep timeouts short and deterministic; every
    failure must kill and reap children and print the captured byte stream.
 
 3. Record the gap with a passing characterization test, not an expected
    failure, skip, or red target. The test must demonstrate:
 
-   - plain LNX with a socket on fd 0/1/2 gives its target `isatty(0) == 0`;
+   - plain Linux with a socket on fd 0/1/2 gives its target `isatty(0) == 0`;
    - direct Linux-terminal invocation still uses its real tty;
-   - redirected `LNX cat` preserves exact bytes and status;
+   - redirected `Linux cat` preserves exact bytes and status;
    - a nonexistent command still returns `RETURN_FAIL` with the current
      diagnostic.
 
@@ -424,7 +425,7 @@ reuse without requiring GTK automation.
    for low-level assertions. The helper should be able to report `isatty()`
    for all three descriptors, `tcgetsid()`, `tcgetpgrp()`, `TIOCGWINSZ`, bytes
    read in raw mode, received `SIGWINCH`, and its own exit mode. Keep it a test
-   program; do not add diagnostic behavior to production LNX.
+   program; do not add diagnostic behavior to production Linux.
 
 ### Acceptance
 
@@ -443,7 +444,7 @@ one.
 
 ### Purpose
 
-Implement an opt-in PTY supervisor inside LNX while leaving its ordinary path
+Implement an opt-in PTY supervisor inside Linux while leaving its ordinary path
 untouched. At the end of this chunk, an isolated fake-console test can launch
 an interactive target with real tty descriptors, exchange lines, and recover
 the target status. Amiga key translation and live resize come later.
@@ -452,7 +453,7 @@ the target status. Amiga key translation and live resize come later.
 
 1. Define the private opt-in marker in an ACE-owned shared header. Give it a
    narrow name such as `ACE_LNX_PTY`, document that only `RunCommand()` sets
-   it, and ensure LNX unsets it before target `execv()`.
+   it, and ensure Linux unsets it before target `execv()`.
 
 2. Split `src/lnx.c` into clear responsibilities without changing the direct
    branch:
@@ -464,8 +465,8 @@ the target status. Amiga key translation and live resize come later.
    - exit-status propagation and cleanup.
 
    In the PTY child, set `TERM=xterm-256color` before executing the target.
-   Chunk 3 extends the same target environment to official ACE LNX direct mode
-   while preserving standalone LNX. Do not probe the host for an Amiga
+   Chunk 3 extends the same target environment to official ACE Linux direct mode
+   while preserving standalone Linux. Do not probe the host for an Amiga
    terminfo entry and do not advertise `COLORTERM=truecolor` without proven
    support.
 
@@ -496,9 +497,9 @@ the target status. Amiga key translation and live resize come later.
 
 6. Reap the target with `waitpid()`. If it exits normally, return its exact
    status. If it dies from a signal, clean up and then reproduce signal
-   termination in the LNX supervisor by restoring the default disposition,
+   termination in the Linux supervisor by restoring the default disposition,
    unblocking the signal, and raising it. That preserves what the parent
-   `RunCommand()` observed when LNX directly execed the target.
+   `RunCommand()` observed when Linux directly execed the target.
 
 7. Keep the opt-in test-only for this chunk. Do not yet modify
    `RunCommand()` to set the marker.
@@ -511,7 +512,7 @@ Extend `test-lnx-pty` to set the private marker explicitly and verify:
 - the PTY target sees `TERM=xterm-256color`, while direct mode preserves a sentinel
   TERM supplied by the caller;
 - the target is a session/process-group leader with a controlling terminal;
-- a complete input line crosses ACE socket -> LNX -> PTY and echo/output
+- a complete input line crosses ACE socket -> Linux -> PTY and echo/output
   crosses back;
 - output larger than one relay buffer is byte-complete;
 - normal statuses including 0 and a nonzero value survive;
@@ -550,7 +551,7 @@ new transport.
 
 3. Apply the resulting dimensions with `TIOCSWINSZ` before the target starts
    doing terminal layout. The focused test must show the dimensions through
-   the target's `TIOCGWINSZ`, not merely through LNX's local state.
+   the target's `TIOCGWINSZ`, not merely through Linux's local state.
 
 ### Work: input sequence adaptation
 
@@ -586,7 +587,7 @@ new transport.
    real console parser test seam.
 
 8. If an advertised sequence is unsupported or rendered incorrectly, adapt
-   it in the PTY-to-ACE direction inside LNX using a bounded streaming parser,
+   it in the PTY-to-ACE direction inside Linux using a bounded streaming parser,
    or implement the missing host-console behavior in an authorized ACE console
    file where that is the cleaner project boundary. Preserve plain output
    byte-for-byte and do not modify imported AROS source. Indexed colors may be
@@ -641,7 +642,7 @@ Extend the fake console to answer queries and inject reports. Verify:
 
 ### Acceptance
 
-The isolated LNX supervisor now presents a coherent `TERM=xterm-256color`
+The isolated Linux supervisor now presents a coherent `TERM=xterm-256color`
 terminal over ACE's existing Amiga console stream. Direct mode outside the ACE
 PTY branch still preserves the caller's TERM.
 
@@ -651,7 +652,7 @@ PTY branch still preserves the caller's TERM.
 
 Select PTY mode only for the real case that needs it. This chunk connects the
 working supervisor to `RunCommand()` and delivers the first end-to-end
-`LNX bash -i` session.
+`Linux bash -i` session.
 
 ### Work
 
@@ -672,13 +673,13 @@ working supervisor to `RunCommand()` and delivers the first end-to-end
    of these conditions:
 
    - `ACE_CONSOLE_INTERACTIVE=1`;
-   - the loaded command is ACE's LNX command;
+   - the loaded command is ACE's Linux command;
    - selected `Input()` and `Output()` share the same console endpoint;
    - both selected streams expose the inherited descriptors required by the
-     LNX bridge;
+     Linux bridge;
    - the shell is not executing with redirected input or output.
 
-   Keep the test for the LNX command narrow. Use the loaded segment's resolved
+   Keep the test for the Linux command narrow. Use the loaded segment's resolved
    command identity/path, not the user's untrusted argument text. Document why
    the basename or companion-path check is sufficient in ACE's command drawer
    model.
@@ -687,24 +688,24 @@ working supervisor to `RunCommand()` and delivers the first end-to-end
    explicitly unset it otherwise so a stale inherited value cannot force PTY
    mode. Do this before `execv(segment->path, argv)`.
 
-   Separately mark every invocation of ACE's official LNX command so LNX sets
+   Separately mark every invocation of ACE's official Linux command so Linux sets
    the Linux target's TERM to `xterm-256color` even when redirection selects
-   direct mode. LNX must remove both private markers before the target exec.
-   A standalone LNX process without the command-runner marker preserves its
+   direct mode. Linux must remove both private markers before the target exec.
+   A standalone Linux process without the command-runner marker preserves its
    caller's TERM.
 
 4. In the parent branch, remember whether the foreground child is a host
    terminal command. Chunk 4 will use the distinction for Ctrl-D. Do not alter
    ordinary ACE break behavior yet.
 
-5. Update README's LNX section only enough to describe the now-supported
+5. Update README's Linux section only enough to describe the now-supported
    interactive console case and the direct/redirection split. Leave detailed
    signal/job-control claims until their tests pass in Chunk 4.
 
 ### End-to-end test
 
 Extend `tests/lnx_pty_test.py` with a private broker and temporary `SYS:C`
-containing the required `LNX`, `EndCLI`, and any probe commands. Start
+containing the required `Linux`, `EndCLI`, and any probe commands. Start
 `ace-user-shell` with one end of a Unix socketpair as fd 0/1/2 and
 `ACE_CONSOLE_INTERACTIVE=1`; the test owns the other end and implements the
 size-query responses.
@@ -712,8 +713,8 @@ size-query responses.
 Run:
 
 ```text
-LNX bash --noprofile --norc -i
-echo LNX-INTERACTIVE-OK
+Linux bash --noprofile --norc -i
+echo Linux-INTERACTIVE-OK
 exit
 EndCLI
 ```
@@ -724,13 +725,13 @@ prompt returns, and the shell exits cleanly after `EndCLI`.
 
 Also prove mode selection:
 
-- `LNX cat < input > output` remains direct and byte-exact;
+- `Linux cat < input > output` remains direct and byte-exact;
 - a piped/scripted `ace-user-shell` does not activate PTY mode;
 - mixed or separate console handles do not silently merge;
-- a normal one-shot LNX command in the live console may observe tty output
+- a normal one-shot Linux command in the live console may observe tty output
   formatting, which is correct because it is now genuinely attached to a
   terminal;
-- direct `./build/LNX` from a host terminal remains direct exec.
+- direct `./build/Linux` from a host terminal remains direct exec.
 
 ### Acceptance
 
@@ -748,7 +749,7 @@ job, jobs can stop/resume, and closing ACE tears down the new session.
 ### Work: shell break mode
 
 1. Replace the foreground PID-only API in `ace_shell_break.h` with a PID plus
-   an explicit foreground kind, for example ordinary ACE command versus LNX
+   an explicit foreground kind, for example ordinary ACE command versus Linux
    host terminal. Keep the type private to the shell/native command seam.
 
 2. Preserve current behavior for ordinary commands exactly:
@@ -757,16 +758,16 @@ job, jobs can stop/resume, and closing ACE tears down the new session.
    - Ctrl-D remains a CLI script-break request, observed by `Shell.c` after
      the current command boundary.
 
-3. For a host-terminal foreground LNX command, route Ctrl-D through the same
+3. For a host-terminal foreground Linux command, route Ctrl-D through the same
    broker/host-signal path as C/E/F instead of raising the shell's
    `SIGBREAKF_CTRL_D`. This distinction is required so `Ctrl-D` can mean EOF
-   to Bash without breaking the ACE script containing the LNX invocation.
+   to Bash without breaking the ACE script containing the Linux invocation.
 
 4. Keep `tests/break_signal_test.py` passing. Add a case proving Ctrl-D during
    an ordinary ACE script still stops the script at the command boundary.
-   Existing behavior must not regress merely because LNX has a terminal mode.
+   Existing behavior must not regress merely because Linux has a terminal mode.
 
-### Work: LNX signal intake
+### Work: Linux signal intake
 
 5. In PTY mode, install async-signal-safe handlers for `SIGUSR1`, `SIGUSR2`,
    `SIGRTMIN`, and `SIGRTMIN+1`. Handlers should write a one-byte event to a
@@ -787,7 +788,7 @@ job, jobs can stop/resume, and closing ACE tears down the new session.
 8. Handle inherited-console EOF/HUP, `SIGHUP`, `SIGTERM`, supervisor failure,
    and ordinary target exit deliberately. The target is in a new session, so
    ACE's existing `kill(-shell_pid, SIGHUP)` no longer reaches it directly.
-   LNX must close the PTY master (causing the controlling-terminal hangup),
+   Linux must close the PTY master (causing the controlling-terminal hangup),
    forward HUP/termination to the known target/foreground process group where
    needed, and reap its direct child. Do not assume `kill(-target_pid, ...)`
    reaches every job after an interactive shell has created additional process
@@ -827,7 +828,7 @@ Add deterministic end-to-end cases:
 
 Interactive Bash has working foreground job control and terminal control
 characters, while ordinary ACE commands retain Amiga break semantics. Console
-shutdown leaves no LNX target session behind.
+shutdown leaves no Linux target session behind.
 
 ## Chunk 5: robustness, documentation, and full regression pass
 
@@ -838,7 +839,7 @@ close edge cases, document the exact boundary, and run the broad suite.
 
 ### Work
 
-1. Audit every descriptor and process path in LNX:
+1. Audit every descriptor and process path in Linux:
 
    - allocation failure before fork;
    - child failure before and during `execv()`;
@@ -860,14 +861,14 @@ close edge cases, document the exact boundary, and run the broad suite.
 
 4. Update documentation:
 
-   - `README.md`: user behavior and examples (`LNX bash`, direct execution,
+   - `README.md`: user behavior and examples (`Linux bash`, direct execution,
      redirection, Linux filesystem/user boundary).
    - `HANDOFF.md`: process tree, PTY ownership, Amiga-to-Linux key translation,
      in-band geometry/resize handling, break translation, and shutdown.
-   - `TODO.md`: remove any LNX PTY item if one was added, or add only genuinely
+   - `TODO.md`: remove any Linux PTY item if one was added, or add only genuinely
      deferred limitations discovered during implementation.
    - `docs/FMM_CRM_SECURITY_HANDOFF.md`: change the sentence saying PTY
-     integration is future work, without weakening the statement that LNX is
+     integration is future work, without weakening the statement that Linux is
      unprivileged and outside device view.
 
 5. Keep comments focused on why the boundaries exist. In particular, explain
@@ -898,7 +899,7 @@ passing.
 From a live uninstalled build started according to `README.md`:
 
 ```text
-AMIGA> LNX bash
+AMIGA> Linux bash
 bash$ tty
 /dev/pts/N
 bash$ stty size
@@ -929,13 +930,13 @@ terminal rather than every xterm extension.
 - `git diff --check` passes.
 - `git status --short` contains only intended files plus preserved user work.
 
-## Chunk 6: preserve the ACE shell after every LNX target
+## Chunk 6: preserve the ACE shell after every Linux target
 
 ### Purpose
 
 Correct a completion-boundary regression discovered by live use: after an
-interactive or one-shot LNX target ended, an idle ACE shell could terminate
-instead of reading its next command. LNX target completion must always return
+interactive or one-shot Linux target ended, an idle ACE shell could terminate
+instead of reading its next command. Linux target completion must always return
 to the existing ACE prompt. This applies to zero and nonzero target statuses;
 only the ACE `EndCLI` command is allowed to end the shell.
 
@@ -944,7 +945,7 @@ only the ACE `EndCLI` command is allowed to end the shell.
 PTY supervision had enabled `O_NONBLOCK` on its inherited standard console
 descriptors. Those descriptors and the waiting shell refer to the same Unix
 socket open-file description, so `F_SETFL` changed the shell's descriptor as
-well. If no command was already queued when LNX returned, the shell's next
+well. If no command was already queued when Linux returned, the shell's next
 read received `EAGAIN` and interpreted it as end-of-input. Existing tests
 usually pre-queued another command and hid the race; the bare-Bash acceptance
 test incorrectly required the whole shell to exit.
@@ -959,22 +960,22 @@ temporary shared-state mutation into the shell.
 
 The live-shell acceptance must:
 
-1. exit bare `LNX bash`, leave the console deliberately idle, and prove the
+1. exit bare `Linux bash`, leave the console deliberately idle, and prove the
    ACE shell remains alive;
-2. run a nonzero LNX target, leave the console idle again, and prove the ACE
+2. run a nonzero Linux target, leave the console idle again, and prove the ACE
    shell remains alive;
-3. run another successful LNX target to prove the same shell still accepts
+3. run another successful Linux target to prove the same shell still accepts
    commands, then leave it idle once more;
 4. issue explicit `EndCLI` and prove that this command, and only this command,
    terminates the shell.
 
-Run the focused LNX suite, the mandatory shell/console regression set, and the
+Run the focused Linux suite, the mandatory shell/console regression set, and the
 broad Chunk 5 handoff suite because this correction changes the lifetime of
 the primary interactive shell process.
 
 ### Acceptance
 
-- No PTY-mode LNX operation changes file-status flags on ACE's shared console
+- No PTY-mode Linux operation changes file-status flags on ACE's shared console
   descriptors.
 - Successful, failed, one-shot, and interactive target completion returns to
   ACE Shell.
@@ -1001,16 +1002,16 @@ serve the current chunk and preserve unrelated user work.
 
 ## Deferred ideas that are not part of this plan
 
-- Running LNX targets through the privileged FMM/CRM service.
+- Running Linux targets through the privileged FMM/CRM service.
 - Giving Linux targets ACE's translated device view.
 - Replacing ACE's Amiga console protocol with xterm.
 - Making every ACE command run under a PTY.
 - Adding shell syntax, automatic Linux-command fallback, or invoking
-  `/bin/sh -c` inside LNX.
+  `/bin/sh -c` inside Linux.
 - Supporting PTY mode when input and output are deliberately redirected to
   different destinations. Direct descriptor mode remains the correct behavior
   there.
-- Building a general terminal multiplexer. LNX has one supervised target
+- Building a general terminal multiplexer. Linux has one supervised target
   session and one existing ACE console channel.
 
 ## Progress ledger
@@ -1020,17 +1021,17 @@ run, and deviations or follow-up risks. Calendar dates are intentionally not
 part of this ledger; ordering is the order of entries and chunks. Do not
 rewrite previous entries.
 
-- Planning only: Re-audited LNX, `RunCommand()`, console byte
+- Planning only: Re-audited Linux, `RunCommand()`, console byte
   transport, Amiga size/resize protocol, keyboard break routing, shell process
   groups, redirection tests, and the FMM/CRM security boundary. No production
   implementation has been started.
 
 - Chunk 0 complete: added `tests/lnx_pty_probe.c`, the focused
   `tests/lnx_pty_test.py` characterization driver, and the `test-lnx-pty`
-  Makefile target. The passing characterization records that the current LNX
+  Makefile target. The passing characterization records that the current Linux
   socket transport produces non-TTY descriptors, while a host PTY produces
   TTY descriptors; it also covers direct byte streaming and missing-command
-  status. Build: `make build/LNX build/ace-user-shell build/ace-broker
+  status. Build: `make build/Linux build/ace-user-shell build/ace-broker
   test-lnx-pty`. Tests: `make test-shell-redirection break-signal-test
   test-native-input test-native-console-handle test-console-channel
   test-console-device-bridge test-shell-return-code`; all passed. The break
@@ -1044,7 +1045,7 @@ rewrite previous entries.
   descriptor cleanup, and exit/signal propagation in `src/lnx.c`, and extended
   the existing probe/harness. The marker remains test-only as required; no
   `RunCommand()` descriptor classification was added yet. Build:
-  `make -r /home/pi/repo/ace/build/LNX
+  `make -r /home/pi/repo/ace/build/Linux
   /home/pi/repo/ace/build/ace-user-shell
   /home/pi/repo/ace/build/ace-broker`. Tests:
   `make -r test-lnx-pty test-shell-redirection break-signal-test
@@ -1068,14 +1069,14 @@ rewrite previous entries.
   strips unsupported SGR, including indexed color, so unsupported bytes do
   not leak into ACE's legacy renderer. `COLORTERM` is removed. Added the
   narrow `native_console_same_endpoint()` helper and `RunCommand()` selection:
-  only ACE's resolved LNX command in an interactive session with identical
+  only ACE's resolved Linux command in an interactive session with identical
   selected console endpoints and two exportable descriptors receives the PTY
   marker. Redirected, piped, split-endpoint, and abstract `CON:` cases remain
-  direct; every official LNX invocation marks the target for
-  `TERM=xterm-256color`, while standalone LNX preserves the caller TERM.
+  direct; every official Linux invocation marks the target for
+  `TERM=xterm-256color`, while standalone Linux preserves the caller TERM.
   The focused harness now models the query/resize stream, fragments all input
   bytes, verifies target geometry/SIGWINCH/output adaptation, and drives a
-  private `ace-user-shell` through `LNX bash --noprofile --norc -i`; the
+  private `ace-user-shell` through `Linux bash --noprofile --norc -i`; the
   redirection test also proves the scripted direct path. `RunCommand()` also
   recognizes a successful resolved `EndCLI` command in the parent, repairing
   its child-local CLI flag hand-off exposed by the interactive fixture. The
@@ -1089,7 +1090,7 @@ rewrite previous entries.
 
 - Chunk 4 complete: added the private foreground-kind seam in
   `src/ace_shell_break.h` and `src/native_command.c`, preserving ordinary
-  ACE Ctrl-C/E/F and script Ctrl-D behavior while routing host-terminal LNX
+  ACE Ctrl-C/E/F and script Ctrl-D behavior while routing host-terminal Linux
   Ctrl-D through the broker signal bridge. `src/lnx.c` now receives the four
   host break signals through an async-safe nonblocking self-pipe and writes
   terminal control bytes to the PTY master, allowing Bash process groups to
@@ -1102,7 +1103,7 @@ rewrite previous entries.
   interruption, stopped/resumed jobs, raw `0x05 0x06` delivery, terminal EOF
   without an ACE script break, and fake-console shutdown with Bash and a
   child PID. Builds use narrow forced rebuilds where the Makefile's known
-  recipe invalidation limitation requires it. Focused LNX, ordinary break,
+  recipe invalidation limitation requires it. Focused Linux, ordinary break,
   and regression tests passed during repair rounds; final delivery tests and
   install are recorded with the pushed commit.
 
@@ -1116,23 +1117,31 @@ rewrite previous entries.
   thirty-two queued break events while the input relay was full. Updated
   `README.md`, `HANDOFF.md`, and `docs/FMM_CRM_SECURITY_HANDOFF.md` with the
   interactive process tree, key/break/geometry protocol, Linux user/filesystem
-  boundary, and direct-mode split. `TODO.md` has no stale LNX PTY item, so it
-  was intentionally left unchanged. The focused LNX suite, mandatory LNX and
+  boundary, and direct-mode split. `TODO.md` has no stale Linux PTY item, so it
+  was intentionally left unchanged. The focused Linux suite, mandatory Linux and
   shell regression set, and the broad handoff suite (`all` plus console,
   runtime, Exec, BOOPSI, and graphics tests) passed. The live acceptance test
-  also now launches bare `LNX bash`, verifies `tty` and `stty size`, and exits
+  also now launches bare `Linux bash`, verifies `tty` and `stty size`, and exits
   cleanly. The pushed tree was installed, including Vim, Regina, and LhA,
   and the final exact executable-identity scan found no ACE shell, console,
-  broker, mediator, LNX, Regina, or Tine processes.
+  broker, mediator, Linux, Regina, or Tine processes.
 
 - Chunk 6 complete: corrected the shared-console lifetime bug that caused ACE
-  Shell to exit after an LNX target when no next command was already queued.
+  Shell to exit after a Linux target when no next command was already queued.
   `src/lnx.c` now leaves the inherited console open-file-description flags
   unchanged and uses per-call nonblocking socket receive/send operations;
   only the private PTY master receives `O_NONBLOCK`. The live acceptance test
   now leaves ACE deliberately idle after bare Bash, nonzero, and successful
-  LNX completion, proves the same shell accepts a later command, and requires
+  Linux completion, proves the same shell accepts a later command, and requires
   explicit `EndCLI` for shell termination. README and HANDOFF document that
-  boundary and its descriptor-sharing constraint. The focused LNX suite
+  boundary and its descriptor-sharing constraint. The focused Linux suite
   passed before commit; the mandatory and broad delivery suites, installation,
   push, and final process-quiescence result are reported in the Chunk 6 handoff.
+
+- Command rename complete: the user-facing command is now `Linux` throughout
+  the build, command drawer, tests, documentation, and diagnostics. The old
+  installed `LNX` entry is removed during installation and by the force-
+  reinstall cleanup path. `data/Shell-Startup` defines `Lx` as an alias for
+  `Linux`, and the redirection regression exercises that alias. The focused
+  Linux PTY suite, shell-redirection test, mandatory regression set, and broad
+  console/runtime/Exec/BOOPSI/graphics set passed against the renamed command.

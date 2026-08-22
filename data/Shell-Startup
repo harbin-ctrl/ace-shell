@@ -33,3 +33,4 @@
 ; still existing.
 Alias CLS Echo "*E[0;0H*E[J" NOLINE
 Alias CLEAR Echo "*E[0;0H*E[J" NOLINE
+Alias Lx Linux

@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <dirent.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -328,9 +329,9 @@ static int find_bounds_reply(const unsigned char *bytes, size_t length,
     return -1;
 }
 
-/* Query the public console bounds protocol.  The only bytes deliberately
- * removed are a complete bounds reply; anything else is typeahead and is
- * returned to the streaming keyboard parser below. */
+/* Query the public console bounds protocol.  The complete bounds reply is
+ * consumed here because it is supervisor metadata, not target typeahead;
+ * anything else is returned to the streaming keyboard parser below. */
 static void query_console_geometry(struct relay_buffer *typeahead,
                                    struct winsize *size)
 {
@@ -470,6 +471,9 @@ static int ace_input_feed(struct ace_input_parser *parser,
         unsigned char byte = bytes[index];
 
         if (parser->utf8_continuations) {
+            /* U+009B is encoded as C2 9B in UTF-8.  Forwarding the
+             * continuation byte here prevents it from being mistaken for
+             * a standalone ACE CSI introducer. */
             if (relay_append(output, &byte, 1) != 0)
                 return -1;
             if (byte >= 0x80 && byte <= 0xbf)
@@ -761,7 +765,52 @@ static int reap_child_for(pid_t child, int *status, int *reaped,
     return 0;
 }
 
-static void signal_pty_target(int master, pid_t child, int signal_number)
+static void signal_pty_session(pid_t session, int signal_number)
+{
+    DIR *proc = opendir("/proc");
+    struct dirent *entry;
+
+    if (!proc)
+        return;
+    while ((entry = readdir(proc)) != NULL) {
+        char path[64];
+        char line[512];
+        char state;
+        long parent;
+        long process_group;
+        long process_session;
+        char *end;
+        long process;
+        FILE *stat_file;
+
+        if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
+            continue;
+        process = strtol(entry->d_name, &end, 10);
+        if (*end || process <= 0 || process == (long)getpid())
+            continue;
+        if (snprintf(path, sizeof(path), "/proc/%s/stat", entry->d_name) >=
+            (int)sizeof(path))
+            continue;
+        stat_file = fopen(path, "r");
+        if (!stat_file)
+            continue;
+        if (!fgets(line, sizeof(line), stat_file)) {
+            fclose(stat_file);
+            continue;
+        }
+        fclose(stat_file);
+        end = strrchr(line, ')');
+        if (!end || sscanf(end + 2, " %c %ld %ld %ld", &state, &parent,
+                           &process_group, &process_session) != 4)
+            continue;
+        if ((pid_t)process_session == session)
+            (void)kill((pid_t)process, signal_number);
+    }
+    closedir(proc);
+}
+
+static void signal_pty_target(int master, pid_t child, pid_t session,
+                              int signal_number)
 {
     pid_t foreground_group = master >= 0 ? tcgetpgrp(master) : -1;
 
@@ -769,12 +818,15 @@ static void signal_pty_target(int master, pid_t child, int signal_number)
         (void)kill(-foreground_group, signal_number);
     if (child > 0)
         (void)kill(child, signal_number);
+    if (session > 0)
+        signal_pty_session(session, signal_number);
 }
 
-static void shutdown_pty_target(int *master, pid_t child, int *status,
-                                int *child_reaped)
+static void shutdown_pty_target(int *master, pid_t child, pid_t session,
+                                int *status, int *child_reaped)
 {
     if (*child_reaped) {
+        signal_pty_target(-1, child, session, SIGKILL);
         if (*master >= 0) {
             close(*master);
             *master = -1;
@@ -784,15 +836,15 @@ static void shutdown_pty_target(int *master, pid_t child, int *status,
     /* Query the current PTY foreground group before closing the master.  The
        initial child may be Bash while the actual foreground job is a later
        process group created by Bash. */
-    signal_pty_target(*master, child, SIGHUP);
+    signal_pty_target(*master, child, session, SIGHUP);
     if (*master >= 0) {
         close(*master);
         *master = -1;
     }
     if (reap_child_for(child, status, child_reaped, 300) != 0) {
-        signal_pty_target(-1, child, SIGTERM);
+        signal_pty_target(-1, child, session, SIGTERM);
         if (reap_child_for(child, status, child_reaped, 300) != 0) {
-            signal_pty_target(-1, child, SIGKILL);
+            signal_pty_target(-1, child, session, SIGKILL);
             if (reap_child_for(child, status, child_reaped, 1000) != 0) {
                 /* SIGKILL cannot be caught.  The blocking wait is only a
                    final kernel-level safeguard against returning with a
@@ -872,7 +924,9 @@ static void relay_write_master(int master, struct relay_buffer *buffer,
         *master_write_open = 0;
 }
 
-/* Return nonzero when the nonblocking master had no bytes ready. */
+/* Return nonzero only when the PTY master has reached end-of-stream.  A
+ * transient EAGAIN after the child exits is not EOF: unread PTY output can
+ * still become available on the next poll. */
 static int relay_read_master(int master, struct terminal_output_parser *parser,
                              struct relay_buffer *buffer, int *master_read_open)
 {
@@ -895,12 +949,14 @@ static int relay_read_master(int master, struct terminal_output_parser *parser,
     }
     if (amount == 0 || (amount < 0 && (errno == EIO || errno == EBADF))) {
         *master_read_open = 0;
-        return 0;
+        return 1;
     }
     if (amount < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-        return 1;
-    if (amount < 0 && errno != EINTR)
+        return 0;
+    if (amount < 0 && errno != EINTR) {
         *master_read_open = 0;
+        return 1;
+    }
     return 0;
 }
 
@@ -943,11 +999,13 @@ static int supervise_pty(const char *program, char **arguments)
     int resize_events_enabled = 0;
     int shutdown_requested = 0;
     long long console_hup_deadline = 0;
+    long long master_eof_deadline = 0;
     int master;
     int slave;
     int status = RETURN_FAIL;
     int child_reaped = 0;
     pid_t child;
+    pid_t session;
     static const unsigned char terminal_eof = LNX_EVENT_CTRL_D;
 
     if (open_pty_pair(&master, &slave) < 0) {
@@ -1006,10 +1064,11 @@ static int supervise_pty(const char *program, char **arguments)
     if (child == 0)
         child_exec(program, arguments, master, slave);
     close(slave);
+    session = child;
 
     while (1) {
         pid_t waited;
-        int no_master_data = 0;
+        int master_at_eof = 0;
 
         if (!child_reaped) {
             waited = waitpid(child, &status, WNOHANG);
@@ -1029,8 +1088,15 @@ static int supervise_pty(const char *program, char **arguments)
         if (console_hup && !child_reaped &&
             monotonic_milliseconds() >= console_hup_deadline)
             shutdown_requested = 1;
+        if (!child_reaped && !master_read_open) {
+            if (!master_eof_deadline)
+                master_eof_deadline = monotonic_milliseconds() + 250;
+            else if (monotonic_milliseconds() >= master_eof_deadline)
+                shutdown_requested = 1;
+        }
         if (shutdown_requested) {
-            shutdown_pty_target(&master, child, &status, &child_reaped);
+            shutdown_pty_target(&master, child, session, &status,
+                                &child_reaped);
             input_open = 0;
             master_read_open = 0;
             master_write_open = 0;
@@ -1060,11 +1126,11 @@ static int supervise_pty(const char *program, char **arguments)
         }
         if (master_read_open && output_open &&
             relay_space(&output) > 0)
-            no_master_data = relay_read_master(master, &output_parser, &output,
-                                               &master_read_open);
+            master_at_eof = relay_read_master(master, &output_parser, &output,
+                                              &master_read_open);
         if (!master_read_open)
             (void)terminal_output_flush(&output_parser, &output);
-        if (child_reaped && no_master_data)
+        if (child_reaped && master_at_eof)
             master_read_open = 0;
         if (child_reaped && !master_read_open && !relay_pending(&output))
             break;
@@ -1140,7 +1206,11 @@ static int supervise_pty(const char *program, char **arguments)
                 master_read_open = 0;
                 master_write_open = 0;
             }
-            if ((!master_read_open || !master_write_open) && !child_reaped)
+            /* A PTY can report EIO after the target has closed its slave but
+             * before waitpid observes its exit.  Keep draining output during
+             * that short race; a write-side failure still means the target
+             * cannot be supervised and is shut down immediately. */
+            if (!master_write_open && !child_reaped)
                 shutdown_requested = 1;
         }
         if (output_index >= 0 &&
@@ -1149,7 +1219,7 @@ static int supervise_pty(const char *program, char **arguments)
                 relay_write_output(STDOUT_FILENO, &output, &output_open);
     }
     if (!child_reaped)
-        shutdown_pty_target(&master, child, &status, &child_reaped);
+        shutdown_pty_target(&master, child, session, &status, &child_reaped);
     if (resize_events_enabled)
         (void)write_control_sequence(ace_resize_disable,
                                      sizeof(ace_resize_disable) - 1);

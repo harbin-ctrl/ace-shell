@@ -71,14 +71,15 @@ static int read_exact(unsigned char *bytes, size_t length)
     return 0;
 }
 
-static int report_raw_bytes(unsigned long requested)
+static int report_raw_bytes(unsigned long requested, int announce,
+                            unsigned int delay_milliseconds)
 {
     struct termios old_attributes;
     struct termios attributes;
     unsigned char *bytes;
     size_t index;
 
-    if (requested > 65536 || tcgetattr(STDIN_FILENO, &old_attributes) != 0)
+    if (requested > 131072 || tcgetattr(STDIN_FILENO, &old_attributes) != 0)
         return 2;
     attributes = old_attributes;
     attributes.c_lflag &= (tcflag_t)~(ICANON | ECHO);
@@ -86,6 +87,19 @@ static int report_raw_bytes(unsigned long requested)
     attributes.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSANOW, &attributes) != 0)
         return 2;
+    if (announce) {
+        printf("raw-ready\n");
+        fflush(stdout);
+    }
+    if (delay_milliseconds) {
+        struct timespec delay = {
+            .tv_sec = delay_milliseconds / 1000,
+            .tv_nsec = (long)(delay_milliseconds % 1000) * 1000000L,
+        };
+
+        while (nanosleep(&delay, &delay) != 0 && errno == EINTR)
+            continue;
+    }
     bytes = calloc(requested ? (size_t)requested : 1, 1);
     if (!bytes)
         return 2;
@@ -151,6 +165,20 @@ static int terminal_output(void)
     return 0;
 }
 
+static int terminal_output_incomplete(void)
+{
+    static const unsigned char bytes[] = "incomplete\033[";
+
+    return write_all(bytes, sizeof(bytes) - 1);
+}
+
+static int c1_output(void)
+{
+    static const unsigned char bytes[] = "target\23399~output\n";
+
+    return write_all(bytes, sizeof(bytes) - 1);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2 || strcmp(argv[1], "report") == 0)
@@ -173,12 +201,38 @@ int main(int argc, char **argv)
         requested = strtoul(argv[2], &end, 10);
         if (!*argv[2] || *end)
             return 2;
-        return report_raw_bytes(requested);
+        return report_raw_bytes(requested, 0, 0);
+    }
+    if (strcmp(argv[1], "bytes-ready") == 0) {
+        char *end;
+        unsigned long requested;
+
+        if (argc != 3)
+            return 2;
+        requested = strtoul(argv[2], &end, 10);
+        if (!*argv[2] || *end)
+            return 2;
+        return report_raw_bytes(requested, 1, 0);
+    }
+    if (strcmp(argv[1], "delay-bytes") == 0) {
+        char *end;
+        unsigned long requested;
+
+        if (argc != 3)
+            return 2;
+        requested = strtoul(argv[2], &end, 10);
+        if (!*argv[2] || *end)
+            return 2;
+        return report_raw_bytes(requested, 1, 500);
     }
     if (strcmp(argv[1], "resize") == 0)
         return await_resize();
     if (strcmp(argv[1], "terminal-output") == 0)
         return terminal_output();
+    if (strcmp(argv[1], "terminal-output-incomplete") == 0)
+        return terminal_output_incomplete();
+    if (strcmp(argv[1], "c1-output") == 0)
+        return c1_output();
     if (strcmp(argv[1], "emit") == 0) {
         unsigned char buffer[8192];
         char *end;

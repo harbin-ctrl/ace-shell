@@ -1052,3 +1052,19 @@ rewrite previous entries.
   recipe invalidation limitation requires it. Focused LNX, ordinary break,
   and regression tests passed during repair rounds; final delivery tests and
   install are recorded with the pushed commit.
+
+- Chunk 5 complete: audited the PTY supervisor's descriptor, child-exit,
+  backpressure, EOF, resize-timeout, parser, and signal-queue paths. Fixed a
+  PTY EIO/waitpid race that could discard unread target output, and extended
+  shutdown escalation to every process in the target's private session so
+  Bash background jobs cannot survive ACE console loss. Added delayed-reader
+  backpressure coverage over 1 MiB, output-after-input-EOF, geometry timeout,
+  child exec failure, incomplete input/output EOF, target C1 output, and
+  thirty-two queued break events while the input relay was full. Updated
+  `README.md`, `HANDOFF.md`, and `docs/FMM_CRM_SECURITY_HANDOFF.md` with the
+  interactive process tree, key/break/geometry protocol, Linux user/filesystem
+  boundary, and direct-mode split. `TODO.md` has no stale LNX PTY item, so it
+  was intentionally left unchanged. The focused LNX suite, mandatory LNX and
+  shell regression set, and the broad handoff suite (`all` plus console,
+  runtime, Exec, BOOPSI, and graphics tests) passed. Delivery install and
+  final process quiescence remain the worker handoff gates.

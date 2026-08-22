@@ -279,14 +279,24 @@ the Linux target on a private PTY, so interactive programs work as terminals:
 
     LNX /usr/bin/uname -a
     LNX printf hello
+    LNX bash
     LNX bash --noprofile --norc -i
 
 That PTY uses `TERM=xterm-256color`, receives the current ACE console size and
 resize notifications, and translates ACE navigation keys to the corresponding
-xterm input sequences. ACE's historical console has no xterm SGR renderer, so
-LNX reduces color attributes to ordinary text and maps clears/alternate-screen
-transitions to ACE's native clear behavior. It does not advertise or pass
-through truecolor.
+xterm input sequences. A bare `LNX bash` is therefore interactive: Bash sees a
+controlling terminal, and Ctrl-C, Ctrl-D, Ctrl-Z, `jobs`, and `fg` have their
+normal terminal meanings. Ctrl-D at an empty Linux prompt exits that target;
+ordinary ACE script Ctrl-D remains the ACE shell's own script boundary.
+ACE's historical console has no xterm SGR renderer, so LNX reduces color
+attributes to ordinary text and maps clears/alternate-screen transitions to
+ACE's native clear behavior. It does not advertise or pass through truecolor.
+
+The PTY target remains an ordinary Linux process running as the logged-in
+Linux user. It sees the host Linux filesystem and user permissions, not ACE's
+AmigaDOS Assign/device view, and the PTY does not grant FMM/CRM privilege.
+`LNX sudo bash` is still an explicit host-side privilege request subject to
+the host's normal policy.
 
 Any AmigaDOS redirection (`<`, `>`, or `>>`), a piped/scripted shell, separate
 console endpoints, or a nonexportable `CON:` handle stays on LNX's direct

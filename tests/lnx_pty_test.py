@@ -37,7 +37,9 @@ def protocol_output(output):
 
 def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
                input_chunks=None, input_delay=0, send_after=None,
-               geometry_responses=None, close_after_input=False, timeout=8):
+               geometry_responses=None, close_after_input=False,
+               close_after_geometry=False, delay_output_read=0,
+               signals_after_input=None, timeout=8):
     """Run one LNX invocation against a responsive fake ACE console."""
     parent, child = socket.socketpair()
     process = None
@@ -53,6 +55,8 @@ def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
     input_started = send_after is None
     next_chunk_at = 0
     input_closed = False
+    read_block_until = 0
+    signals_sent = False
     deadline = time.monotonic() + timeout
     try:
         process = subprocess.Popen(
@@ -77,7 +81,7 @@ def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
             wait = min(0.05, deadline - now)
             if input_started and not pending and chunk_index < len(chunks):
                 wait = min(wait, max(0, next_chunk_at - now))
-            readable = [parent]
+            readable = [] if now < read_block_until else [parent]
             writable = [parent] if pending else []
             ready_read, ready_write, _ = select.select(readable, writable, [],
                                                         wait)
@@ -102,6 +106,9 @@ def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
                                 CSI + f"1;1;{rows};{cols} r".encode()
                             )
                             geometry_index += 1
+                            if delay_output_read and not read_block_until:
+                                read_block_until = (time.monotonic() +
+                                                    delay_output_read)
                         position = found + len(BOUNDS_QUERY)
                     controls[:] = scan[-(len(BOUNDS_QUERY) - 1):]
                     if not input_started and send_after in output:
@@ -116,8 +123,18 @@ def run_socket(lnx, arguments, *, environment=None, input_bytes=b"",
                     del pending[:amount]
                     if not pending and chunk_index < len(chunks):
                         next_chunk_at = time.monotonic() + input_delay
+            if (signals_after_input and not signals_sent and input_started and
+                    chunk_index == len(chunks) and not pending):
+                for signal_number in signals_after_input:
+                    os.kill(process.pid, signal_number)
+                signals_sent = True
             if (close_after_input and not input_closed and input_started and
                     chunk_index == len(chunks) and not pending):
+                parent.shutdown(socket.SHUT_WR)
+                input_closed = True
+            if (close_after_geometry and not input_closed and
+                    geometry_index and chunk_index == len(chunks) and
+                    not pending):
                 parent.shutdown(socket.SHUT_WR)
                 input_closed = True
         status = process.wait(timeout=1)
@@ -294,17 +311,94 @@ def test_isolated_supervisor(lnx, probe):
     if b"\033[31m" in terminal_output or b"\033[38;5;196m" in terminal_output:
         fail("PTY output adaptation leaked unsupported xterm SGR", terminal_output)
 
-    requested = 200000
-    emit_status, emit_output = run_socket(
-        lnx, [probe, "emit", str(requested)], environment=pty_environment,
+    incomplete_status, incomplete_output = run_socket(
+        lnx, [probe, "terminal-output-incomplete"],
+        environment=pty_environment, geometry_responses=[(24, 80)],
+    )
+    assert_protocol(incomplete_output, 1, context="PTY incomplete output")
+    incomplete_output = protocol_output(incomplete_output)
+    if incomplete_status != 0 or b"incomplete\033[" not in incomplete_output:
+        fail("PTY did not flush an incomplete terminal sequence at EOF",
+             incomplete_output)
+
+    c1_status, c1_output = run_socket(
+        lnx, [probe, "c1-output"], environment=pty_environment,
         geometry_responses=[(24, 80)],
     )
-    assert_protocol(emit_output, 1, context="PTY large relay")
+    assert_protocol(c1_output, 1, context="PTY target C1 output")
+    c1_output = normalized(protocol_output(c1_output))
+    if c1_status != 0 or b"target\x9b99~output\n" not in c1_output:
+        fail("PTY target output was mistaken for ACE input controls", c1_output)
+
+    requested = 1024 * 1024
+    emit_status, emit_output = run_socket(
+        lnx, [probe, "emit", str(requested)], environment=pty_environment,
+        geometry_responses=[(24, 80)], delay_output_read=0.75, timeout=12,
+    )
+    assert_protocol(emit_output, 1, context="PTY backpressure relay")
     emit_output = protocol_output(emit_output)
     expected = bytes((ord("A") + index % 26 for index in range(requested)))
     if emit_status != 0 or emit_output != expected:
-        fail(f"PTY relay truncated or changed large output with status {emit_status}",
+        fail(f"PTY backpressure relay truncated or changed output with status {emit_status}",
              emit_output[:4096])
+
+    close_status, close_output = run_socket(
+        lnx, [probe, "emit", "300000"], environment=pty_environment,
+        geometry_responses=[(24, 80)],
+        close_after_geometry=True, timeout=12,
+    )
+    assert_protocol(close_output, 1, context="PTY output after input EOF")
+    close_output = protocol_output(close_output)
+    close_expected = bytes((ord("A") + index % 26 for index in range(300000)))
+    if close_status != 0 or close_output != close_expected:
+        fail("PTY lost target output when ACE input closed", close_output[:4096])
+
+    timeout_status, timeout_output = run_socket(
+        lnx, [probe, "report"], environment=pty_environment,
+        geometry_responses=[], timeout=8,
+    )
+    assert_protocol(timeout_output, 1, context="PTY geometry timeout")
+    timeout_output = normalized(protocol_output(timeout_output))
+    if timeout_status != 0 or b"winsize 24 80\n" not in timeout_output:
+        fail("PTY geometry timeout did not use the safe fallback", timeout_output)
+
+    exec_status, exec_output = run_socket(
+        lnx, ["/ace/lnx-pty-child-does-not-exist"],
+        environment=pty_environment, geometry_responses=[(24, 80)],
+    )
+    assert_protocol(exec_output, 1, context="PTY child exec failure")
+    exec_output = normalized(protocol_output(exec_output))
+    if exec_status == 0 or b"LNX: /ace/lnx-pty-child-does-not-exist:" not in exec_output:
+        fail("PTY child exec failure was not reported or propagated",
+             exec_output)
+
+    eof_status, eof_output = run_socket(
+        lnx, [probe, "bytes-ready", "1"], environment=pty_environment,
+        input_bytes=b"\x9b", geometry_responses=[(24, 80)],
+        send_after=b"raw-ready", close_after_input=True,
+    )
+    assert_protocol(eof_output, 1, context="PTY incomplete input EOF")
+    eof_output = normalized(eof_output)
+    if (eof_status != 0 or b"raw-ready\n" not in eof_output or
+            raw_bytes_line(b"\x9b") not in eof_output):
+        fail("PTY did not flush an incomplete ACE input sequence at EOF",
+             eof_output)
+
+    queued_input = b"A" * 65536
+    queued_signal_count = 32
+    signal_status, signal_output = run_socket(
+        lnx, [probe, "delay-bytes",
+              str(len(queued_input) + queued_signal_count)],
+        environment=pty_environment, input_bytes=queued_input,
+        geometry_responses=[(24, 80)], send_after=b"raw-ready",
+        signals_after_input=[signal.SIGRTMIN] * queued_signal_count, timeout=12,
+    )
+    assert_protocol(signal_output, 1, context="PTY queued signal relay")
+    signal_output = normalized(protocol_output(signal_output))
+    if (signal_status != 0 or signal_output.count(b" 41") != len(queued_input) or
+            signal_output.count(b" 05") != queued_signal_count):
+        fail("PTY lost break events while its input queue was full",
+             signal_output[:4096])
 
     for expected_status in (0, 7, 255):
         status, output = run_socket(

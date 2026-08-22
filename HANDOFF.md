@@ -44,6 +44,43 @@ child command process and stops the parent shell. Ordinary host commands are
 not searched through `PATH`; `LNX` is the explicit direct Linux executable
 escape hatch.
 
+### LNX interactive PTY boundary
+
+When the official `LNX` command is launched from the live ACE console with the
+same unredirected console endpoint for input and output, `RunCommand()` marks
+that invocation for PTY mode. The resulting process tree is:
+
+```text
+ace-user-shell
+  -> LNX supervisor (owns the PTY master and relay queues)
+       -> Linux target (new session, PTY slave, controlling terminal)
+```
+
+The supervisor's standard descriptors remain attached to the ACE console
+channel. ACE keyboard bytes travel through the Amiga-to-Linux input adapter:
+navigation/function keys become the corresponding xterm sequences, Backspace
+and Delete stay distinct, and UTF-8 bytes are forwarded without being parsed
+as ACE C1 controls. Target output travels in the other direction through the
+bounded xterm-to-ACE output adapter. Geometry is requested with the public
+`CSI 0 q` protocol; the supervisor consumes that reply, applies it with
+`TIOCSWINSZ`, and enables the ACE resize report before starting the target.
+Later size reports repeat the query and `TIOCSWINSZ` operation. The target is
+given `TERM=xterm-256color` and no `COLORTERM` claim that ACE cannot render.
+
+The ACE shell's break bridge sends Ctrl-C, Ctrl-D, Ctrl-E, and Ctrl-F events to
+the supervisor, which writes the corresponding terminal bytes to the PTY.
+Ctrl-D is treated as a PTY input byte only for this LNX foreground kind; the
+ordinary ACE shell still treats it as a script boundary. The supervisor
+tracks the PTY foreground process group so Ctrl-C/Ctrl-Z and shell job control
+reach the active Linux job. On target exit it drains unread PTY output before
+closing the console path. Console loss and supervisor signals use bounded
+HUP/TERM/KILL cleanup of the target and its foreground group.
+
+AmigaDOS redirection, pipes/scripts, split endpoints, and nonexportable
+`CON:` handles deliberately stay on LNX's direct descriptor path. They do not
+receive a PTY, keyboard translation, or interactive `TERM` contract; direct
+mode is the byte-preserving Linux escape hatch for those cases.
+
 The public startup policy is intentionally small. No switch starts an
 ordinary user session; `--root` authorizes lazy requests to the separate
 privileged mediator. The old `--user`, `--deviceview`, and `--mountview`

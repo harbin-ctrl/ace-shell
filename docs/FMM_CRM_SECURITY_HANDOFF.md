@@ -367,8 +367,10 @@ Current ACE source is not perfectly centralized. The migration must audit and
 route the direct host calls in `src/native_dos.c`, `src/ace_amiga_posix.c`,
 broker-side file operations, and any other shared wrappers. `LNX` is explicitly
 outside this model: it is an experimental Linux escape hatch, and a Linux
-program launched by `LNX` remains a Linux user process. A user who wants
-`sudo bash` may use `LNX sudo bash` once the LNX PTY integration is complete.
+program launched by `LNX` remains an ordinary unprivileged Linux user process,
+with the host Linux filesystem view rather than ACE's device view. Its
+interactive PTY path is implemented, so a user who wants `sudo bash` may use
+`LNX sudo bash`; any elevation remains subject to the host's normal policy.
 
 Unmodified third-party code that bypasses ACE's DOS/POSIX seam is also outside
 automatic per-object elevation. That is desirable; do not add a dangerous

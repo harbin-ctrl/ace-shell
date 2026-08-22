@@ -929,6 +929,58 @@ terminal rather than every xterm extension.
 - `git diff --check` passes.
 - `git status --short` contains only intended files plus preserved user work.
 
+## Chunk 6: preserve the ACE shell after every LNX target
+
+### Purpose
+
+Correct a completion-boundary regression discovered by live use: after an
+interactive or one-shot LNX target ended, an idle ACE shell could terminate
+instead of reading its next command. LNX target completion must always return
+to the existing ACE prompt. This applies to zero and nonzero target statuses;
+only the ACE `EndCLI` command is allowed to end the shell.
+
+### Root cause and implementation
+
+PTY supervision had enabled `O_NONBLOCK` on its inherited standard console
+descriptors. Those descriptors and the waiting shell refer to the same Unix
+socket open-file description, so `F_SETFL` changed the shell's descriptor as
+well. If no command was already queued when LNX returned, the shell's next
+read received `EAGAIN` and interpreted it as end-of-input. Existing tests
+usually pre-queued another command and hid the race; the bare-Bash acceptance
+test incorrectly required the whole shell to exit.
+
+Keep only the private PTY master in descriptor-level nonblocking mode. Perform
+console relay reads and writes with per-call `MSG_DONTWAIT` socket operations,
+and suppress send-side `SIGPIPE` per call. Do not rely on restoring descriptor
+flags at normal exit: signals or abrupt supervisor failure could still leak a
+temporary shared-state mutation into the shell.
+
+### Focused verification
+
+The live-shell acceptance must:
+
+1. exit bare `LNX bash`, leave the console deliberately idle, and prove the
+   ACE shell remains alive;
+2. run a nonzero LNX target, leave the console idle again, and prove the ACE
+   shell remains alive;
+3. run another successful LNX target to prove the same shell still accepts
+   commands, then leave it idle once more;
+4. issue explicit `EndCLI` and prove that this command, and only this command,
+   terminates the shell.
+
+Run the focused LNX suite, the mandatory shell/console regression set, and the
+broad Chunk 5 handoff suite because this correction changes the lifetime of
+the primary interactive shell process.
+
+### Acceptance
+
+- No PTY-mode LNX operation changes file-status flags on ACE's shared console
+  descriptors.
+- Successful, failed, one-shot, and interactive target completion returns to
+  ACE Shell.
+- Explicit `EndCLI` still exits cleanly.
+- Build, commit, test, push, full install, and process quiescence gates pass.
+
 ## Authorized files by chunk
 
 This table is both a routing aid and explicit permission to edit every listed
@@ -945,6 +997,7 @@ serve the current chunk and preserve unrelated user work.
 | 3 | `src/native_command.c`, `src/native_dos.c`, `src/native_host.h`, `src/lnx_pty.h`, `tests/lnx_pty_test.py`, `tests/shell_redirection_test.sh`, `Makefile`, `README.md`, `docs/lnx-pty-worker-plan.md` |
 | 4 | `src/ace_shell_break.h`, `src/native_command.c`, `src/lnx.c`, `tests/break_signal_test.py`, `tests/lnx_pty_test.py`, `Makefile`, `docs/lnx-pty-worker-plan.md` |
 | 5 | `src/lnx.c`, `src/native_command.c`, `src/native_dos.c`, `src/native_host.h`, `src/ace_shell_break.h`, `src/lnx_pty.h`, `tests/lnx_pty_probe.c`, `tests/lnx_pty_test.py`, `tests/break_signal_test.py`, `tests/shell_redirection_test.sh`, `tests/console_device_bridge_test.c`, `Makefile`, `README.md`, `HANDOFF.md`, `TODO.md`, `docs/FMM_CRM_SECURITY_HANDOFF.md`, `docs/lnx-pty-worker-plan.md` |
+| 6 | `src/lnx.c`, `tests/lnx_pty_test.py`, `README.md`, `HANDOFF.md`, `docs/lnx-pty-worker-plan.md` |
 
 ## Deferred ideas that are not part of this plan
 
@@ -1071,3 +1124,15 @@ rewrite previous entries.
   cleanly. The pushed tree was installed, including Vim, Regina, and LhA,
   and the final exact executable-identity scan found no ACE shell, console,
   broker, mediator, LNX, Regina, or Tine processes.
+
+- Chunk 6 complete: corrected the shared-console lifetime bug that caused ACE
+  Shell to exit after an LNX target when no next command was already queued.
+  `src/lnx.c` now leaves the inherited console open-file-description flags
+  unchanged and uses per-call nonblocking socket receive/send operations;
+  only the private PTY master receives `O_NONBLOCK`. The live acceptance test
+  now leaves ACE deliberately idle after bare Bash, nonzero, and successful
+  LNX completion, proves the same shell accepts a later command, and requires
+  explicit `EndCLI` for shell termination. README and HANDOFF document that
+  boundary and its descriptor-sharing constraint. The focused LNX suite
+  passed before commit; the mandatory and broad delivery suites, installation,
+  push, and final process-quiescence result are reported in the Chunk 6 handoff.

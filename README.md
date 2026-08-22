@@ -287,7 +287,9 @@ resize notifications, and translates ACE navigation keys to the corresponding
 xterm input sequences. A bare `LNX bash` is therefore interactive: Bash sees a
 controlling terminal, and Ctrl-C, Ctrl-D, Ctrl-Z, `jobs`, and `fg` have their
 normal terminal meanings. Ctrl-D at an empty Linux prompt exits that target;
-ordinary ACE script Ctrl-D remains the ACE shell's own script boundary.
+ordinary ACE script Ctrl-D remains the ACE shell's own script boundary. When
+any LNX target exits, including one that reports a nonzero status, control
+returns to the same ACE shell. Only an explicit ACE `EndCLI` ends that shell.
 ACE's historical console has no xterm SGR renderer, so LNX reduces color
 attributes to ordinary text and maps clears/alternate-screen transitions to
 ACE's native clear behavior. It does not advertise or pass through truecolor.

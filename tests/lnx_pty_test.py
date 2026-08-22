@@ -798,12 +798,46 @@ def run_bare_bash_acceptance(repo, lnx, probe):
             message="bare LNX bash did not expose a usable PTY",
         )
         fixture.send(b"exit\n")
-        fixture.wait_for(
-            lambda output: output.count(RESIZE_DISABLE) == 1 and
-            fixture.shell.poll() is not None,
+        fixture.wait_for(lambda output: output.count(RESIZE_DISABLE) == 1,
                          message="bare LNX bash did not exit cleanly")
+
+        # Do not pre-queue the next command.  The ACE shell must remain alive
+        # while its console is idle after every LNX target, including a
+        # nonzero target; otherwise a leaked O_NONBLOCK flag turns EAGAIN into
+        # an apparent shell EOF and races ahead of ordinary tests.
+        time.sleep(0.5)
+        if fixture.shell.poll() is not None:
+            fail("ACE shell exited when bare LNX bash returned",
+                 bytes(fixture.output))
+        fixture.send(f"LNX {probe} exit 7\n".encode())
+        fixture.wait_for(
+            lambda output: fixture.queries >= 2 and
+            output.count(RESIZE_DISABLE) == 2,
+            message="nonzero LNX target did not return to ACE shell",
+        )
+        time.sleep(0.5)
+        if fixture.shell.poll() is not None:
+            fail("ACE shell exited when nonzero LNX target returned",
+                 bytes(fixture.output))
+        fixture.send(f"LNX {probe} report\n".encode())
+        fixture.wait_for(
+            lambda output: fixture.queries >= 3 and
+            b"isatty 1 1 1" in output and
+            output.count(RESIZE_DISABLE) == 3,
+            message="ACE shell did not accept LNX after prior targets",
+        )
+        time.sleep(0.5)
+        if fixture.shell.poll() is not None:
+            fail("ACE shell exited when successful LNX target returned",
+                 bytes(fixture.output))
+
+        fixture.send(b"EndCLI\n")
+        fixture.parent.shutdown(socket.SHUT_WR)
+        fixture.wait_for(lambda output: fixture.shell.poll() is not None,
+                         timeout=5,
+                         message="explicit EndCLI did not exit ACE shell")
         if fixture.shell.returncode != 0:
-            fail(f"bare LNX bash exited {fixture.shell.returncode}",
+            fail(f"ACE shell exited {fixture.shell.returncode} after EndCLI",
                  bytes(fixture.output))
     finally:
         fixture.close(force=True)

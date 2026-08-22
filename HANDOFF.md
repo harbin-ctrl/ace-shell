@@ -73,8 +73,12 @@ Ctrl-D is treated as a PTY input byte only for this LNX foreground kind; the
 ordinary ACE shell still treats it as a script boundary. The supervisor
 tracks the PTY foreground process group so Ctrl-C/Ctrl-Z and shell job control
 reach the active Linux job. On target exit it drains unread PTY output before
-closing the console path. Console loss and supervisor signals use bounded
-HUP/TERM/KILL cleanup of the target and its foreground group.
+returning to the waiting ACE shell; target status never implicitly means
+`EndCLI`. The supervisor uses per-call nonblocking socket operations on the
+shared console descriptors, because changing their `O_NONBLOCK` file status
+would also change the waiting shell's endpoint and make idle input look like
+EOF. Console loss and supervisor signals use bounded HUP/TERM/KILL cleanup of
+the target and its foreground group.
 
 AmigaDOS redirection, pipes/scripts, split endpoints, and nonexportable
 `CON:` handles deliberately stay on LNX's direct descriptor path. They do not

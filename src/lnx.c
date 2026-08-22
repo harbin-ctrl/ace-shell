@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -153,6 +154,21 @@ static int set_nonblocking(int descriptor)
     return 0;
 }
 
+/* PTY mode is selected only for ACE's full-duplex Unix console socket.  Use
+ * per-call nonblocking I/O on that shared endpoint: changing O_NONBLOCK on
+ * the inherited descriptor would also change the waiting ACE shell's open
+ * file description, causing it to mistake EAGAIN for end-of-input after LNX
+ * returns. */
+static ssize_t console_receive(int descriptor, void *bytes, size_t length)
+{
+    return recv(descriptor, bytes, length, MSG_DONTWAIT);
+}
+
+static ssize_t console_send(int descriptor, const void *bytes, size_t length)
+{
+    return send(descriptor, bytes, length, MSG_DONTWAIT | MSG_NOSIGNAL);
+}
+
 static void lnx_signal_handler(int signal_number)
 {
     unsigned char event = signal_number == SIGUSR1 ? LNX_EVENT_CTRL_C :
@@ -243,7 +259,7 @@ static void close_lnx_signal_pipe(void)
 static int write_control_sequence(const unsigned char *bytes, size_t length)
 {
     while (length) {
-        ssize_t written = write(STDOUT_FILENO, bytes, length);
+        ssize_t written = console_send(STDOUT_FILENO, bytes, length);
 
         if (written > 0) {
             bytes += written;
@@ -358,8 +374,9 @@ static void query_console_geometry(struct relay_buffer *typeahead,
         if (polled <= 0 || !(input.revents & (POLLIN | POLLHUP | POLLERR)))
             continue;
         while (received_length < sizeof(received)) {
-            ssize_t amount = read(STDIN_FILENO, received + received_length,
-                                  sizeof(received) - received_length);
+            ssize_t amount = console_receive(
+                STDIN_FILENO, received + received_length,
+                sizeof(received) - received_length);
 
             if (amount > 0) {
                 received_length += (size_t)amount;
@@ -869,7 +886,7 @@ static void relay_read_input(int descriptor, struct ace_input_parser *parser,
         return;
     if (space > sizeof(bytes))
         space = sizeof(bytes);
-    amount = read(descriptor, bytes, space);
+    amount = console_receive(descriptor, bytes, space);
     if (amount > 0) {
         if (ace_input_feed(parser, buffer, bytes, (size_t)amount) != 0)
             *input_open = 0;
@@ -967,8 +984,8 @@ static void relay_write_output(int descriptor, struct relay_buffer *buffer,
 
     if (!relay_pending(buffer))
         return;
-    amount = write(descriptor, buffer->bytes + buffer->offset,
-                   relay_pending(buffer));
+    amount = console_send(descriptor, buffer->bytes + buffer->offset,
+                          relay_pending(buffer));
     if (amount > 0)
         relay_consume(buffer, (size_t)amount);
     else if (amount < 0 && errno != EINTR && errno != EAGAIN &&
@@ -1012,8 +1029,7 @@ static int supervise_pty(const char *program, char **arguments)
         fprintf(stderr, "LNX: cannot allocate PTY: %s\n", strerror(errno));
         return RETURN_FAIL;
     }
-    if (initialize_pty_termios(slave) < 0 || set_nonblocking(master) < 0 ||
-        set_nonblocking(STDIN_FILENO) < 0 || set_nonblocking(STDOUT_FILENO) < 0) {
+    if (initialize_pty_termios(slave) < 0 || set_nonblocking(master) < 0) {
         int error = errno;
 
         close(slave);

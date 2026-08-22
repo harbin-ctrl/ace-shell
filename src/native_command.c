@@ -33,8 +33,11 @@ struct ace_command_segment {
 };
 
 static volatile sig_atomic_t foreground_child;
+static volatile sig_atomic_t foreground_kind;
 static int break_pipe[2] = {-1, -1};
 static pthread_t break_thread;
+
+static void shell_script_break_handler(int signal_number);
 
 static void *broker_break_dispatch(void *unused)
 {
@@ -61,13 +64,25 @@ static void *broker_break_dispatch(void *unused)
 
 static void shell_break_handler(int signal_number)
 {
+    enum ace_shell_foreground_kind kind =
+        (enum ace_shell_foreground_kind)foreground_kind;
     unsigned char event = signal_number == SIGUSR1 ? 'C' :
                           signal_number == SIGUSR2 ? 'D' :
                           signal_number == SIGRTMIN ? 'E' :
                           signal_number == SIGRTMIN + 1 ? 'F' : 0;
 
-    if (foreground_child > 0 && break_pipe[1] >= 0)
+    /* Ctrl-D is the CLI's script boundary unless the foreground process is
+       an LNX host terminal.  In the latter case it is an input byte for the
+       PTY, just like the other host-signal bridge events. */
+    if (signal_number == SIGUSR2 && kind != ACE_SHELL_FOREGROUND_LNX)
+        shell_script_break_handler(signal_number);
+    else if (foreground_child > 0 && break_pipe[1] >= 0)
         (void)write(break_pipe[1], &event, 1);
+    else if (foreground_child > 0 && kind == ACE_SHELL_FOREGROUND_LNX)
+        (void)kill((pid_t)foreground_child,
+                   signal_number == SIGUSR1 ? SIGUSR1 :
+                   signal_number == SIGUSR2 ? SIGUSR2 :
+                   signal_number == SIGRTMIN ? SIGRTMIN : SIGRTMIN + 1);
     else if (signal_number == SIGUSR1)
         ace_aros_runtime_raise_from_host(SIGBREAKF_CTRL_C);
     else if (signal_number == SIGRTMIN)
@@ -91,6 +106,10 @@ void ace_shell_break_init(void)
     memset(&action, 0, sizeof(action));
     action.sa_handler = shell_break_handler;
     sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, SIGUSR1);
+    sigaddset(&action.sa_mask, SIGUSR2);
+    sigaddset(&action.sa_mask, SIGRTMIN);
+    sigaddset(&action.sa_mask, SIGRTMIN + 1);
     action.sa_flags = SA_RESTART;
     if (pipe(break_pipe) == 0 &&
         pthread_create(&break_thread, NULL, broker_break_dispatch, NULL) == 0)
@@ -109,15 +128,16 @@ void ace_shell_break_init(void)
         break_pipe[0] = break_pipe[1] = -1;
     }
     (void)sigaction(SIGUSR1, &action, NULL);
+    (void)sigaction(SIGUSR2, &action, NULL);
     (void)sigaction(SIGRTMIN, &action, NULL);
     (void)sigaction(SIGRTMIN + 1, &action, NULL);
-    action.sa_handler = shell_script_break_handler;
-    (void)sigaction(SIGUSR2, &action, NULL);
 }
 
-void ace_shell_break_set_foreground(pid_t child)
+void ace_shell_break_set_foreground(pid_t child,
+                                    enum ace_shell_foreground_kind kind)
 {
     foreground_child = (sig_atomic_t)child;
+    foreground_kind = (sig_atomic_t)kind;
     (void)native_broker_task_set_foreground_pid(child);
 }
 
@@ -760,6 +780,9 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
     }
     sigemptyset(&break_mask);
     sigaddset(&break_mask, SIGUSR1);
+    sigaddset(&break_mask, SIGUSR2);
+    sigaddset(&break_mask, SIGRTMIN);
+    sigaddset(&break_mask, SIGRTMIN + 1);
     (void)sigprocmask(SIG_BLOCK, &break_mask, &previous_mask);
     child = fork();
     if (child < 0) {
@@ -806,15 +829,17 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
         execv(segment->path, argv);
         _exit(RETURN_FAIL);
     }
-    ace_shell_break_set_foreground(child);
+    ace_shell_break_set_foreground(
+        child, lnx_pty_mode ? ACE_SHELL_FOREGROUND_LNX :
+                              ACE_SHELL_FOREGROUND_ACE);
     (void)sigprocmask(SIG_SETMASK, &previous_mask, NULL);
     if (waitpid(child, &status, 0) < 0) {
-        ace_shell_break_set_foreground(0);
+        ace_shell_break_set_foreground(0, ACE_SHELL_FOREGROUND_NONE);
         native_console_title("ACE Shell");
         SetIoErr(ERROR_OBJECT_NOT_FOUND);
         return RETURN_FAIL;
     }
-    ace_shell_break_set_foreground(0);
+    ace_shell_break_set_foreground(0, ACE_SHELL_FOREGROUND_NONE);
     if (script) {
         /* Whatever the command read is gone from the script for good. The
            descriptor knows that; this stream does not until it is told. */

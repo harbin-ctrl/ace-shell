@@ -1033,3 +1033,22 @@ rewrite previous entries.
   Build/tests: `make -r test-lnx-pty test-shell-redirection`; both passed
   before the common regression run. No privileged FMM/CRM or device-view
   component changed.
+
+- Chunk 4 complete: added the private foreground-kind seam in
+  `src/ace_shell_break.h` and `src/native_command.c`, preserving ordinary
+  ACE Ctrl-C/E/F and script Ctrl-D behavior while routing host-terminal LNX
+  Ctrl-D through the broker signal bridge. `src/lnx.c` now receives the four
+  host break signals through an async-safe nonblocking self-pipe and writes
+  terminal control bytes to the PTY master, allowing Bash process groups to
+  implement Ctrl-C, Ctrl-D, Ctrl-Z, `jobs`, and `fg`. The supervisor drains
+  PTY output while the target is alive, ignores SIGPIPE so console loss is
+  observable, gives queued input a short grace period, and then performs
+  bounded foreground-group/target HUP, TERM, KILL escalation with direct-child
+  reaping. Signal handlers mask peer break signals so rapid Ctrl-E/Ctrl-F
+  events retain order. `tests/lnx_pty_test.py` now covers Bash foreground
+  interruption, stopped/resumed jobs, raw `0x05 0x06` delivery, terminal EOF
+  without an ACE script break, and fake-console shutdown with Bash and a
+  child PID. Builds use narrow forced rebuilds where the Makefile's known
+  recipe invalidation limitation requires it. Focused LNX, ordinary break,
+  and regression tests passed during repair rounds; final delivery tests and
+  install are recorded with the pushed commit.

@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <dos/dos.h>
@@ -27,9 +28,18 @@
 #define ACE_GEOMETRY_FALLBACK_ROWS 24
 #define ACE_GEOMETRY_FALLBACK_COLS 80
 
+#define LNX_EVENT_CTRL_C 0x03
+#define LNX_EVENT_CTRL_D 0x04
+#define LNX_EVENT_CTRL_E 0x05
+#define LNX_EVENT_CTRL_F 0x06
+#define LNX_EVENT_SHUTDOWN_HUP 0x80
+#define LNX_EVENT_SHUTDOWN_TERM 0x81
+
 static const unsigned char ace_bounds_query[] = "\2330 q";
 static const unsigned char ace_resize_enable[] = "\23312{";
 static const unsigned char ace_resize_disable[] = "\23312}";
+
+static int lnx_signal_pipe[2] = {-1, -1};
 
 /*
  * LNX is the deliberate escape hatch from the AmigaDOS command world.
@@ -140,6 +150,93 @@ static int set_nonblocking(int descriptor)
     if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0)
         return -1;
     return 0;
+}
+
+static void lnx_signal_handler(int signal_number)
+{
+    unsigned char event = signal_number == SIGUSR1 ? LNX_EVENT_CTRL_C :
+                          signal_number == SIGUSR2 ? LNX_EVENT_CTRL_D :
+                          signal_number == SIGRTMIN ? LNX_EVENT_CTRL_E :
+                          signal_number == SIGRTMIN + 1 ? LNX_EVENT_CTRL_F :
+                          signal_number == SIGHUP ? LNX_EVENT_SHUTDOWN_HUP :
+                          signal_number == SIGTERM ? LNX_EVENT_SHUTDOWN_TERM :
+                          0;
+
+    if (event && lnx_signal_pipe[1] >= 0)
+        (void)write(lnx_signal_pipe[1], &event, sizeof(event));
+}
+
+static int install_lnx_signal_handlers(void)
+{
+    struct sigaction action;
+    const int signal_numbers[] = {
+        SIGUSR1, SIGUSR2, SIGRTMIN, SIGRTMIN + 1, SIGHUP, SIGTERM,
+    };
+    size_t index;
+
+    if (pipe2(lnx_signal_pipe, O_CLOEXEC | O_NONBLOCK) < 0)
+        return -1;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = lnx_signal_handler;
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, SIGUSR1);
+    sigaddset(&action.sa_mask, SIGUSR2);
+    sigaddset(&action.sa_mask, SIGRTMIN);
+    sigaddset(&action.sa_mask, SIGRTMIN + 1);
+    sigaddset(&action.sa_mask, SIGHUP);
+    sigaddset(&action.sa_mask, SIGTERM);
+    action.sa_handler = SIG_IGN;
+    if (sigaction(SIGPIPE, &action, NULL) < 0) {
+        int error = errno;
+
+        close(lnx_signal_pipe[0]);
+        close(lnx_signal_pipe[1]);
+        lnx_signal_pipe[0] = lnx_signal_pipe[1] = -1;
+        errno = error;
+        return -1;
+    }
+    action.sa_handler = lnx_signal_handler;
+    for (index = 0; index < sizeof(signal_numbers) / sizeof(signal_numbers[0]);
+         index++) {
+        if (sigaction(signal_numbers[index], &action, NULL) < 0) {
+            int error = errno;
+
+            close(lnx_signal_pipe[0]);
+            close(lnx_signal_pipe[1]);
+            lnx_signal_pipe[0] = lnx_signal_pipe[1] = -1;
+            errno = error;
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void restore_lnx_signal_handlers(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = SIG_DFL;
+    sigemptyset(&action.sa_mask);
+    (void)sigaction(SIGUSR1, &action, NULL);
+    (void)sigaction(SIGUSR2, &action, NULL);
+    (void)sigaction(SIGRTMIN, &action, NULL);
+    (void)sigaction(SIGRTMIN + 1, &action, NULL);
+    (void)sigaction(SIGHUP, &action, NULL);
+    (void)sigaction(SIGTERM, &action, NULL);
+    (void)sigaction(SIGPIPE, &action, NULL);
+}
+
+static void close_lnx_signal_pipe(void)
+{
+    int read_descriptor = lnx_signal_pipe[0];
+    int write_descriptor = lnx_signal_pipe[1];
+
+    lnx_signal_pipe[0] = lnx_signal_pipe[1] = -1;
+    if (read_descriptor >= 0)
+        close(read_descriptor);
+    if (write_descriptor >= 0)
+        close(write_descriptor);
 }
 
 static int write_control_sequence(const unsigned char *bytes, size_t length)
@@ -631,14 +728,86 @@ static int initialize_pty_termios(int slave)
     return tcsetattr(slave, TCSANOW, &attributes);
 }
 
-static void terminate_child(pid_t child)
+static long long monotonic_milliseconds(void)
 {
+    struct timespec now;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+        return 0;
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static int reap_child_for(pid_t child, int *status, int *reaped,
+                          int timeout_milliseconds)
+{
+    long long deadline = monotonic_milliseconds() + timeout_milliseconds;
+
+    while (!*reaped) {
+        pid_t waited = waitpid(child, status, WNOHANG);
+
+        if (waited == child) {
+            *reaped = 1;
+            return 0;
+        }
+        if (waited < 0 && errno != EINTR) {
+            *reaped = 1;
+            *status = RETURN_FAIL;
+            return -1;
+        }
+        if (monotonic_milliseconds() >= deadline)
+            return 1;
+        (void)poll(NULL, 0, 10);
+    }
+    return 0;
+}
+
+static void signal_pty_target(int master, pid_t child, int signal_number)
+{
+    pid_t foreground_group = master >= 0 ? tcgetpgrp(master) : -1;
+
+    if (foreground_group > 0 && foreground_group != getpgrp())
+        (void)kill(-foreground_group, signal_number);
     if (child > 0)
-        (void)kill(child, SIGHUP);
+        (void)kill(child, signal_number);
+}
+
+static void shutdown_pty_target(int *master, pid_t child, int *status,
+                                int *child_reaped)
+{
+    if (*child_reaped) {
+        if (*master >= 0) {
+            close(*master);
+            *master = -1;
+        }
+        return;
+    }
+    /* Query the current PTY foreground group before closing the master.  The
+       initial child may be Bash while the actual foreground job is a later
+       process group created by Bash. */
+    signal_pty_target(*master, child, SIGHUP);
+    if (*master >= 0) {
+        close(*master);
+        *master = -1;
+    }
+    if (reap_child_for(child, status, child_reaped, 300) != 0) {
+        signal_pty_target(-1, child, SIGTERM);
+        if (reap_child_for(child, status, child_reaped, 300) != 0) {
+            signal_pty_target(-1, child, SIGKILL);
+            if (reap_child_for(child, status, child_reaped, 1000) != 0) {
+                /* SIGKILL cannot be caught.  The blocking wait is only a
+                   final kernel-level safeguard against returning with a
+                   direct-child zombie. */
+                while (waitpid(child, status, 0) < 0 && errno == EINTR)
+                    ;
+                *child_reaped = 1;
+            }
+        }
+    }
 }
 
 static void relay_read_input(int descriptor, struct ace_input_parser *parser,
-                             struct relay_buffer *buffer, int *input_open)
+                             struct relay_buffer *buffer, int *input_open,
+                             int *console_hup)
 {
     unsigned char bytes[4096];
     ssize_t amount;
@@ -654,8 +823,37 @@ static void relay_read_input(int descriptor, struct ace_input_parser *parser,
             *input_open = 0;
     }
     else if (amount == 0 || (errno != EINTR && errno != EAGAIN &&
-                             errno != EWOULDBLOCK))
+                             errno != EWOULDBLOCK)) {
         *input_open = 0;
+        *console_hup = 1;
+    }
+}
+
+static void relay_read_signal_events(struct relay_buffer *input,
+                                     int *shutdown_requested)
+{
+    unsigned char event;
+
+    while (relay_space(input) > 0) {
+        ssize_t amount = read(lnx_signal_pipe[0], &event, sizeof(event));
+
+        if (amount == 1) {
+            if (event == LNX_EVENT_SHUTDOWN_HUP ||
+                event == LNX_EVENT_SHUTDOWN_TERM) {
+                *shutdown_requested = 1;
+                continue;
+            }
+            if (event == LNX_EVENT_CTRL_C || event == LNX_EVENT_CTRL_D ||
+                event == LNX_EVENT_CTRL_E || event == LNX_EVENT_CTRL_F)
+                (void)relay_append(input, &event, sizeof(event));
+            continue;
+        }
+        if (amount < 0 && errno == EINTR)
+            continue;
+        if (amount < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return;
+        return;
+    }
 }
 
 static void relay_write_master(int master, struct relay_buffer *buffer,
@@ -730,19 +928,27 @@ static int supervise_pty(const char *program, char **arguments)
     struct ace_input_parser input_parser = {0};
     struct terminal_output_parser output_parser = {0};
     struct winsize geometry;
-    struct pollfd descriptors[3];
+    struct pollfd descriptors[4];
     int descriptor_count;
+    int input_index;
+    int signal_index;
+    int master_index;
+    int output_index;
     int input_open = 1;
     int output_open = 1;
     int master_read_open = 1;
     int master_write_open = 1;
     int input_flushed = 0;
+    int console_hup = 0;
     int resize_events_enabled = 0;
+    int shutdown_requested = 0;
+    long long console_hup_deadline = 0;
     int master;
     int slave;
     int status = RETURN_FAIL;
     int child_reaped = 0;
     pid_t child;
+    static const unsigned char terminal_eof = LNX_EVENT_CTRL_D;
 
     if (open_pty_pair(&master, &slave) < 0) {
         fprintf(stderr, "LNX: cannot allocate PTY: %s\n", strerror(errno));
@@ -757,12 +963,22 @@ static int supervise_pty(const char *program, char **arguments)
         fprintf(stderr, "LNX: cannot initialize PTY: %s\n", strerror(error));
         return RETURN_FAIL;
     }
+    if (install_lnx_signal_handlers() < 0) {
+        int error = errno;
+
+        close(slave);
+        close(master);
+        fprintf(stderr, "LNX: cannot install PTY signal bridge: %s\n",
+                strerror(error));
+        return RETURN_FAIL;
+    }
     query_console_geometry(&typeahead, &geometry);
     if (ioctl(slave, TIOCSWINSZ, &geometry) < 0) {
         int error = errno;
 
         close(slave);
         close(master);
+        close_lnx_signal_pipe();
         fprintf(stderr, "LNX: cannot set PTY geometry: %s\n", strerror(error));
         return RETURN_FAIL;
     }
@@ -770,6 +986,7 @@ static int supervise_pty(const char *program, char **arguments)
                        relay_pending(&typeahead)) != 0) {
         close(slave);
         close(master);
+        close_lnx_signal_pipe();
         fprintf(stderr, "LNX: console typeahead exceeds relay buffer\n");
         return RETURN_FAIL;
     }
@@ -782,6 +999,7 @@ static int supervise_pty(const char *program, char **arguments)
 
         close(slave);
         close(master);
+        close_lnx_signal_pipe();
         fprintf(stderr, "LNX: cannot fork PTY target: %s\n", strerror(error));
         return RETURN_FAIL;
     }
@@ -798,9 +1016,7 @@ static int supervise_pty(const char *program, char **arguments)
             if (waited == child)
                 child_reaped = 1;
             else if (waited < 0 && errno != EINTR) {
-                terminate_child(child);
-                (void)waitpid(child, &status, 0);
-                child_reaped = 1;
+                shutdown_requested = 1;
                 status = RETURN_FAIL;
             }
         }
@@ -808,10 +1024,24 @@ static int supervise_pty(const char *program, char **arguments)
             input_open = 0;
             input.offset = input.length = 0;
             master_write_open = 0;
+            input_flushed = 1;
+        }
+        if (console_hup && !child_reaped &&
+            monotonic_milliseconds() >= console_hup_deadline)
+            shutdown_requested = 1;
+        if (shutdown_requested) {
+            shutdown_pty_target(&master, child, &status, &child_reaped);
+            input_open = 0;
+            master_read_open = 0;
+            master_write_open = 0;
+            output.offset = output.length = 0;
+            break;
         }
         if (!input_open && !input_flushed) {
-            (void)ace_input_flush(&input_parser, &input);
-            input_flushed = 1;
+            if (ace_input_flush(&input_parser, &input) == 0 &&
+                (!master_write_open ||
+                 relay_append(&input, &terminal_eof, sizeof(terminal_eof)) == 0))
+                input_flushed = 1;
         }
         if (input_parser.resize_pending) {
             struct relay_buffer resize_typeahead = {0};
@@ -826,8 +1056,9 @@ static int supervise_pty(const char *program, char **arguments)
         if (!output_open) {
             output.offset = output.length = 0;
             master_read_open = 0;
+            shutdown_requested = 1;
         }
-        if (child_reaped && master_read_open && output_open &&
+        if (master_read_open && output_open &&
             relay_space(&output) > 0)
             no_master_data = relay_read_master(master, &output_parser, &output,
                                                &master_read_open);
@@ -839,13 +1070,24 @@ static int supervise_pty(const char *program, char **arguments)
             break;
 
         descriptor_count = 0;
+        input_index = signal_index = master_index = output_index = -1;
         if (input_open && relay_space(&input) > 0) {
+            input_index = descriptor_count;
             descriptors[descriptor_count].fd = STDIN_FILENO;
             descriptors[descriptor_count].events = POLLIN | POLLHUP;
             descriptors[descriptor_count].revents = 0;
             descriptor_count++;
         }
+        if (!child_reaped && lnx_signal_pipe[0] >= 0 &&
+            relay_space(&input) > 0) {
+            signal_index = descriptor_count;
+            descriptors[descriptor_count].fd = lnx_signal_pipe[0];
+            descriptors[descriptor_count].events = POLLIN | POLLHUP;
+            descriptors[descriptor_count].revents = 0;
+            descriptor_count++;
+        }
         if (master_read_open || (master_write_open && relay_pending(&input))) {
+            master_index = descriptor_count;
             descriptors[descriptor_count].fd = master;
             descriptors[descriptor_count].events =
                 (master_read_open ? POLLIN | POLLHUP : 0) |
@@ -854,43 +1096,38 @@ static int supervise_pty(const char *program, char **arguments)
             descriptor_count++;
         }
         if (output_open && relay_pending(&output)) {
+            output_index = descriptor_count;
             descriptors[descriptor_count].fd = STDOUT_FILENO;
             descriptors[descriptor_count].events = POLLOUT;
             descriptors[descriptor_count].revents = 0;
             descriptor_count++;
         }
         if (!descriptor_count) {
-            terminate_child(child_reaped ? -1 : child);
-            if (!child_reaped) {
-                (void)waitpid(child, &status, 0);
-                child_reaped = 1;
-            }
-            master_read_open = 0;
+            shutdown_requested = !child_reaped;
+            if (!shutdown_requested)
+                break;
             continue;
         }
         if (poll(descriptors, (nfds_t)descriptor_count, 100) < 0) {
             if (errno == EINTR)
                 continue;
-            terminate_child(child_reaped ? -1 : child);
-            if (!child_reaped) {
-                (void)waitpid(child, &status, 0);
-                child_reaped = 1;
-            }
-            master_read_open = 0;
-            output.offset = output.length = 0;
+            shutdown_requested = 1;
             continue;
         }
 
-        descriptor_count = 0;
-        if (input_open && relay_space(&input) > 0) {
-            if (descriptors[descriptor_count].revents &
+        if (input_index >= 0 &&
+            descriptors[input_index].revents &
                 (POLLIN | POLLHUP | POLLERR))
                 relay_read_input(STDIN_FILENO, &input_parser, &input,
-                                 &input_open);
-            descriptor_count++;
-        }
-        if (master_read_open || (master_write_open && relay_pending(&input))) {
-            short events = descriptors[descriptor_count].revents;
+                                 &input_open, &console_hup);
+        if (console_hup && !console_hup_deadline)
+            console_hup_deadline = monotonic_milliseconds() + 250;
+        if (signal_index >= 0 &&
+            descriptors[signal_index].revents &
+                (POLLIN | POLLHUP | POLLERR))
+            relay_read_signal_events(&input, &shutdown_requested);
+        if (master_index >= 0) {
+            short events = descriptors[master_index].revents;
 
             if (master_write_open && relay_pending(&input) &&
                 (events & (POLLOUT | POLLERR | POLLHUP)))
@@ -903,19 +1140,23 @@ static int supervise_pty(const char *program, char **arguments)
                 master_read_open = 0;
                 master_write_open = 0;
             }
-            descriptor_count++;
+            if ((!master_read_open || !master_write_open) && !child_reaped)
+                shutdown_requested = 1;
         }
-        if (output_open && relay_pending(&output)) {
-            if (descriptors[descriptor_count].revents &
+        if (output_index >= 0 &&
+            descriptors[output_index].revents &
                 (POLLOUT | POLLERR | POLLHUP))
                 relay_write_output(STDOUT_FILENO, &output, &output_open);
-            descriptor_count++;
-        }
     }
+    if (!child_reaped)
+        shutdown_pty_target(&master, child, &status, &child_reaped);
     if (resize_events_enabled)
         (void)write_control_sequence(ace_resize_disable,
                                      sizeof(ace_resize_disable) - 1);
-    close(master);
+    if (master >= 0)
+        close(master);
+    restore_lnx_signal_handlers();
+    close_lnx_signal_pipe();
     if (WIFSIGNALED(status)) {
         int signal_number = WTERMSIG(status);
         sigset_t empty_mask;

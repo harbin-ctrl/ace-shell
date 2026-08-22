@@ -568,7 +568,7 @@ def run_interactive_shell(repo, lnx, probe):
 class LiveShell:
     """Private ACE console fixture with protocol responses and signal access."""
 
-    def __init__(self, repo, lnx, probe):
+    def __init__(self, repo, lnx, probe, command=None):
         self.repo = repo
         self.temp = tempfile.TemporaryDirectory(prefix="ace-lnx-break-",
                                                   dir=repo)
@@ -592,6 +592,7 @@ class LiveShell:
             "XDG_RUNTIME_DIR": str(runtime_dir),
             "ACE_CONSOLE_INTERACTIVE": "1",
             "TERM": "amiga",
+            "HOME": str(root),
         })
         self.broker = subprocess.Popen(
             [str(repo / "build" / "ace-broker"), str(self.socket_path)],
@@ -620,7 +621,7 @@ class LiveShell:
             )
             child.close()
             self.parent.setblocking(True)
-            self.send(b"LNX bash --noprofile --norc -i\n")
+            self.send(command or b"LNX bash --noprofile --norc -i\n")
         except BaseException:
             self.close(force=True)
             raise
@@ -779,6 +780,35 @@ def run_interactive_break_tests(repo, lnx, probe):
         fixture.close(force=True)
 
 
+def run_bare_bash_acceptance(repo, lnx, probe):
+    fixture = LiveShell(repo, lnx, probe, command=b"LNX bash\n")
+    prompt = b"BARE-PTY> "
+    try:
+        fixture.wait_for(lambda output: fixture.queries >= 1,
+                         message="bare Bash PTY query was not answered")
+        fixture.send(b"export PS1='BARE-'P'TY> '\nprintf 'BARE-'R'-READY\\n'\n")
+        fixture.wait_for(
+            lambda output: b"BARE-R-READY" in output and
+            output.count(prompt) >= 2,
+            message="bare LNX bash did not infer interactive mode",
+        )
+        fixture.send(b"tty\nstty size\n")
+        fixture.wait_for(
+            lambda output: b"/dev/pts/" in output and b"30 100" in output,
+            message="bare LNX bash did not expose a usable PTY",
+        )
+        fixture.send(b"exit\n")
+        fixture.wait_for(
+            lambda output: output.count(RESIZE_DISABLE) == 1 and
+            fixture.shell.poll() is not None,
+                         message="bare LNX bash did not exit cleanly")
+        if fixture.shell.returncode != 0:
+            fail(f"bare LNX bash exited {fixture.shell.returncode}",
+                 bytes(fixture.output))
+    finally:
+        fixture.close(force=True)
+
+
 def run_console_shutdown_test(repo, lnx, probe):
     fixture = LiveShell(repo, lnx, probe)
     try:
@@ -832,6 +862,7 @@ def main():
         fail("LNX PTY binaries are not built")
     test_isolated_supervisor(lnx, probe)
     run_interactive_shell(repo, lnx, probe)
+    run_bare_bash_acceptance(repo, lnx, probe)
     run_interactive_break_tests(repo, lnx, probe)
     run_console_shutdown_test(repo, lnx, probe)
     print("LNX PTY protocol, activation, break translation, job control, and shutdown pass")

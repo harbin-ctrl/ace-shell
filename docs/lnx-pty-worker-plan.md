@@ -1066,5 +1066,7 @@ rewrite previous entries.
   boundary, and direct-mode split. `TODO.md` has no stale LNX PTY item, so it
   was intentionally left unchanged. The focused LNX suite, mandatory LNX and
   shell regression set, and the broad handoff suite (`all` plus console,
-  runtime, Exec, BOOPSI, and graphics tests) passed. Delivery install and
-  final process quiescence remain the worker handoff gates.
+  runtime, Exec, BOOPSI, and graphics tests) passed. The live acceptance test
+  also now launches bare `LNX bash`, verifies `tty` and `stty size`, and exits
+  cleanly. Delivery install and final process quiescence remain the worker
+  handoff gates.

@@ -403,6 +403,9 @@ all: $(BUILD)/Echo $(BUILD)/CD $(BUILD)/Path $(BUILD)/PathPart $(BUILD)/Which $(
 $(BUILD)/break-probe: tests/break_probe.c $(BUILD)/dos-runtime.o $(BUILD)/native_dos.o $(BUILD)/native_command.o $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) -I$(COMPAT) -Isrc $(filter-out %.h,$^) -o $@
 
+$(BUILD)/lnx-pty-probe: tests/lnx_pty_probe.c | $(BUILD)
+	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
+
 $(BUILD)/broker-task-test: tests/broker_task_test.c $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) -pthread -Isrc $(filter-out %.h,$^) -o $@
 
@@ -440,6 +443,10 @@ test-easy-request: $(BUILD)/easy-request-test $(BUILD)/ace-broker
 .PHONY: break-signal-test
 break-signal-test: $(BUILD)/break-probe $(BUILD)/ace-user-shell
 	python3 tests/break_signal_test.py
+
+.PHONY: test-lnx-pty
+test-lnx-pty: $(BUILD)/LNX $(BUILD)/lnx-pty-probe
+	python3 tests/lnx_pty_test.py
 
 # ET (Edified Tine) is a guest program, so its build is deliberately separate
 # from the core command graph.  Install invokes it after ACE itself is built; this
@@ -2024,7 +2031,7 @@ test-tine: all tine
 	python3 tests/tine_console_query_test.py
 	python3 tests/tine_screen_trace_test.py
 
-.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection
+.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty
 AROS_CLIP_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Clip.c
 $(BUILD)/Clip.o: $(AROS_CLIP_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-sign-compare -I$(COMPAT) $(AROS_SHCOMMAND_CFLAGS) -c $< -o $@

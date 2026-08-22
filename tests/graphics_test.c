@@ -298,6 +298,28 @@ static void test_write_to_console_ansi(void)
     assert(!cell_has_ink(buf, 3, 0));
     free(buf);
 
+    /* This is the stream LNX hands to the real AROS parser after adapting
+       xterm's CSI 2J and alternate-screen transitions into ACE's native
+       home-and-erase form.  xterm SGR (ordinary, 8/16-color, and indexed)
+       has deliberately been removed before this seam because stdconclass
+       has no SGR dispatcher; only the ordinary text survives. */
+    {
+        static const UBYTE lnx_adapted[] =
+            "\x9b" "1;1H" "\x9b" "Jplain\x9b" "2Ccursor\x9b"
+            "1;1H" "\x9b" "Jafter";
+        int column;
+
+        writeToConsole((struct ConUnit *)unit, (STRPTR)lnx_adapted,
+                       (ULONG)(sizeof(lnx_adapted) - 1), &g_console_base);
+        assert(cu->cu_XCP == 5);
+        buf = malloc((size_t)WIN_WIDTH * WIN_HEIGHT * 3);
+        assert(buf);
+        ace_gfx_read_rgb(rp, buf, (size_t)WIN_WIDTH * WIN_HEIGHT * 3);
+        for (column = 0; column < 5; column++)
+            assert(cell_has_ink(buf, column, 0));
+        free(buf);
+    }
+
     DisposeObject(unit);
     ace_gfx_destroy_rastport(rp);
     ace_gfx_unload_font(g_font);

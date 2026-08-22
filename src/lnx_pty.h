@@ -9,6 +9,7 @@
  */
 #define ACE_LNX_PTY_VARIABLE "ACE_LNX_PTY"
 #define ACE_LNX_PTY_VALUE "1"
+#define ACE_LNX_TARGET_TERM_VARIABLE "ACE_LNX_TARGET_TERM"
 #define ACE_LNX_PTY_TERM "xterm-256color"
 
 #endif

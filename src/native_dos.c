@@ -1188,6 +1188,16 @@ static struct native_console_endpoint *native_endpoint_for_handle(BPTR handle)
     return NULL;
 }
 
+int native_console_same_endpoint(BPTR first, BPTR second)
+{
+    struct native_console_endpoint *first_endpoint =
+        native_endpoint_for_handle(first);
+    struct native_console_endpoint *second_endpoint =
+        native_endpoint_for_handle(second);
+
+    return first_endpoint && first_endpoint == second_endpoint;
+}
+
 static struct native_console_endpoint *native_endpoint_for_file(FILE *file)
 {
     native_init_stdio_handles();

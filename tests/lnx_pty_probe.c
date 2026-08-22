@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 static int write_all(const unsigned char *bytes, size_t length)
@@ -36,6 +37,7 @@ static int report_terminal(void)
     pid_t terminal_process_group = tcgetpgrp(STDIN_FILENO);
     const char *term = getenv("TERM");
     const char *marker = getenv("ACE_LNX_PTY");
+    const char *color_term = getenv("COLORTERM");
 
     (void)ioctl(STDIN_FILENO, TIOCGWINSZ, &size);
     printf("isatty %d %d %d\n",
@@ -47,7 +49,105 @@ static int report_terminal(void)
            (long)terminal_session, (long)terminal_process_group);
     printf("winsize %u %u\n", (unsigned)size.ws_row, (unsigned)size.ws_col);
     printf("pty-marker %s\n", marker ? marker : "(unset)");
+    printf("colorterm %s\n", color_term ? color_term : "(unset)");
     fflush(stdout);
+    return 0;
+}
+
+static int read_exact(unsigned char *bytes, size_t length)
+{
+    while (length != 0) {
+        ssize_t amount = read(STDIN_FILENO, bytes, length);
+
+        if (amount > 0) {
+            bytes += amount;
+            length -= (size_t)amount;
+        } else if (amount < 0 && errno == EINTR) {
+            continue;
+        } else {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int report_raw_bytes(unsigned long requested)
+{
+    struct termios old_attributes;
+    struct termios attributes;
+    unsigned char *bytes;
+    size_t index;
+
+    if (requested > 65536 || tcgetattr(STDIN_FILENO, &old_attributes) != 0)
+        return 2;
+    attributes = old_attributes;
+    attributes.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+    attributes.c_cc[VMIN] = 1;
+    attributes.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &attributes) != 0)
+        return 2;
+    bytes = calloc(requested ? (size_t)requested : 1, 1);
+    if (!bytes)
+        return 2;
+    if (read_exact(bytes, (size_t)requested) != 0) {
+        free(bytes);
+        return 1;
+    }
+    printf("bytes");
+    for (index = 0; index < requested; index++)
+        printf(" %02x", bytes[index]);
+    printf("\n");
+    fflush(stdout);
+    free(bytes);
+    return 0;
+}
+
+static volatile sig_atomic_t resized;
+
+static void resize_handler(int signal_number)
+{
+    (void)signal_number;
+    resized = 1;
+}
+
+static int await_resize(void)
+{
+    struct sigaction action;
+    struct winsize size = {0};
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = resize_handler;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGWINCH, &action, NULL) != 0)
+        return 2;
+    (void)ioctl(STDIN_FILENO, TIOCGWINSZ, &size);
+    printf("resize-ready %u %u\n", (unsigned)size.ws_row,
+           (unsigned)size.ws_col);
+    fflush(stdout);
+    while (!resized)
+        pause();
+    (void)ioctl(STDIN_FILENO, TIOCGWINSZ, &size);
+    printf("resize %u %u\n", (unsigned)size.ws_row,
+           (unsigned)size.ws_col);
+    fflush(stdout);
+    return 0;
+}
+
+static int terminal_output(void)
+{
+    static const unsigned char bytes[] =
+        "plain\033[2J\033[Hcursor\033[31mred\033[0m"
+        "\033[38;5;196mindexed\033[48;5;23mbackground\033[0m"
+        "\033[?1049halt\033[?1049lrest\n";
+
+    for (size_t index = 0; index < sizeof(bytes) - 1; index++) {
+        struct timespec pause_time = {0, 1000000};
+
+        if (write_all(bytes + index, 1) != 0)
+            return 1;
+        while (nanosleep(&pause_time, &pause_time) != 0 && errno == EINTR)
+            continue;
+    }
     return 0;
 }
 
@@ -64,6 +164,21 @@ int main(int argc, char **argv)
         fflush(stdout);
         return 0;
     }
+    if (strcmp(argv[1], "bytes") == 0) {
+        char *end;
+        unsigned long requested;
+
+        if (argc != 3)
+            return 2;
+        requested = strtoul(argv[2], &end, 10);
+        if (!*argv[2] || *end)
+            return 2;
+        return report_raw_bytes(requested);
+    }
+    if (strcmp(argv[1], "resize") == 0)
+        return await_resize();
+    if (strcmp(argv[1], "terminal-output") == 0)
+        return terminal_output();
     if (strcmp(argv[1], "emit") == 0) {
         unsigned char buffer[8192];
         char *end;

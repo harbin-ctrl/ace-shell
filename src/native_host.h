@@ -36,6 +36,10 @@ int native_console_dup_input(BPTR handle);
 int native_console_dup_output(BPTR handle);
 void native_console_close(BPTR handle);
 int native_console_is_raw_mode(BPTR handle);
+/* True only when both handles identify the same concrete ACE console
+   endpoint.  It intentionally does not make abstract CON: handles
+   exportable as POSIX descriptors. */
+int native_console_same_endpoint(BPTR first, BPTR second);
 int native_console_geometry(BPTR handle, int *rows, int *cols);
 unsigned long native_console_resize_generation(BPTR handle);
 void native_console_notify_resize(int rows, int cols);

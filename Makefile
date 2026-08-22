@@ -445,7 +445,8 @@ break-signal-test: $(BUILD)/break-probe $(BUILD)/ace-user-shell
 	python3 tests/break_signal_test.py
 
 .PHONY: test-lnx-pty
-test-lnx-pty: $(BUILD)/LNX $(BUILD)/lnx-pty-probe
+test-lnx-pty: $(BUILD)/LNX $(BUILD)/lnx-pty-probe $(BUILD)/ace-user-shell \
+	$(BUILD)/ace-broker $(BUILD)/EndCLI
 	python3 tests/lnx_pty_test.py
 
 # ET (Edified Tine) is a guest program, so its build is deliberately separate
@@ -472,7 +473,7 @@ $(LHA_AROS_SOURCE_STAMP): $(LHA_AROS_ARCHIVE) | $(BUILD)
 	$(TAR) --extract --gzip --file "$<" --strip-components=1 --directory "$(LHA_AROS_DIR)"
 	touch "$@"
 
-$(BUILD)/native_dos.o: src/native_dos.c src/ace_crm_retry.h src/broker_protocol.h src/broker_client.h src/aros_dos_path.h src/aros_console_editor.h src/console_channel.h src/native_console_endpoint.h | $(BUILD)
+$(BUILD)/native_dos.o: src/native_dos.c src/ace_crm_retry.h src/broker_protocol.h src/broker_client.h src/aros_dos_path.h src/aros_console_editor.h src/console_channel.h src/native_console_endpoint.h src/native_host.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(COMPAT) -Isrc -c $< -o $@
 
 $(BUILD)/ace-amiga-posix.o: src/ace_amiga_posix.c src/ace_crm_retry.h src/ace_amiga_posix.h \
@@ -496,7 +497,7 @@ $(BUILD)/LhA: $(LHA_AROS_OBJS) $(BUILD)/ace-amiga-posix.o \
 $(BUILD)/ace-vim-runtime.o: src/ace_vim_runtime.c | $(BUILD)
 	$(CC) $(CFLAGS) -I$(COMPAT) -c $< -o $@
 
-$(BUILD)/native_command.o: src/native_command.c src/broker_protocol.h src/ace_shell_break.h src/aros_exec_runtime.h | $(BUILD)
+$(BUILD)/native_command.o: src/native_command.c src/broker_protocol.h src/ace_shell_break.h src/aros_exec_runtime.h src/lnx_pty.h src/native_host.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(COMPAT) -Isrc -c $< -o $@
 
 $(BUILD)/ace-launcher.o: src/ace_launcher.c src/ace_modes.h | $(BUILD)

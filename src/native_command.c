@@ -23,6 +23,7 @@
 #include "broker_protocol.h"
 #include "ace_shell_break.h"
 #include "aros_exec_runtime.h"
+#include "lnx_pty.h"
 #include "native_host.h"
 
 int ace_dos_handle_descriptor(BPTR handle);
@@ -420,6 +421,39 @@ static void native_command_title(const char *path)
     native_console_title(slash ? slash + 1 : path);
 }
 
+static int native_command_has_basename(const struct ace_command_segment *segment,
+                                       const char *name)
+{
+    const char *basename;
+
+    if (!segment)
+        return 0;
+    basename = strrchr(segment->path, '/');
+    basename = basename ? basename + 1 : segment->path;
+    /* segment->path is the resolved executable returned by LoadSeg(), not
+       user argument text. ACE commands are deliberately loaded from C: or
+       the executable's companion drawer, so a well-known resolved basename
+       is the narrow identity needed at this command-runner boundary. */
+    return strcasecmp(basename, name) == 0;
+}
+
+static int native_command_is_lnx(const struct ace_command_segment *segment)
+{
+    return native_command_has_basename(segment, "LNX");
+}
+
+static int native_command_is_endcli(const struct ace_command_segment *segment)
+{
+    return native_command_has_basename(segment, "EndCLI");
+}
+
+static int native_console_session_active(void)
+{
+    const char *interactive = getenv("ACE_CONSOLE_INTERACTIVE");
+
+    return interactive && strcmp(interactive, "1") == 0;
+}
+
 /*
  * Execute.
  *
@@ -677,6 +711,12 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
     int script_fd = -1;
     pid_t child;
     int status;
+    int input_descriptor;
+    int output_descriptor;
+    int lnx_command;
+    int lnx_pty_mode;
+    BPTR selected_input;
+    BPTR selected_output;
     sigset_t break_mask;
     sigset_t previous_mask;
 
@@ -690,6 +730,19 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
     }
     argv[0] = segment->path;
     native_command_title(segment->path);
+    /* Redirection has already selected Input()/Output().  A real ACE console
+       contributes the same endpoint on both sides; files, pipes, separate
+       consoles, and abstract CON: handles do not satisfy this complete
+       predicate.  The descriptor checks are intentionally before fork so a
+       PTY is chosen only when LNX can inherit both sides of this bridge. */
+    selected_input = Input();
+    selected_output = Output();
+    input_descriptor = ace_dos_handle_descriptor(selected_input);
+    output_descriptor = ace_dos_handle_descriptor(selected_output);
+    lnx_command = native_command_is_lnx(segment);
+    lnx_pty_mode = native_console_session_active() && lnx_command &&
+                   input_descriptor >= 0 && output_descriptor >= 0 &&
+                   native_console_same_endpoint(selected_input, selected_output);
     script = native_cli_script_input();
     if (script) {
         script_fd = fileno(script);
@@ -716,9 +769,6 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
         return RETURN_FAIL;
     }
     if (child == 0) {
-        int input_descriptor;
-        int output_descriptor;
-
         (void)sigprocmask(SIG_SETMASK, &previous_mask, NULL);
         native_broker_reset_after_fork();
         if (native_broker_getcwd(cwd, sizeof(cwd)) == 0)
@@ -731,13 +781,24 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
            POSIX descriptors, so carry the selected streams across the exec
            boundary.  The argument line remains in ACE_COMMAND_ARGUMENTS;
            native_dos.c supplies that prefix before redirected stdin. */
-        input_descriptor = ace_dos_handle_descriptor(Input());
-        output_descriptor = ace_dos_handle_descriptor(Output());
         if ((input_descriptor >= 0 &&
              dup2(input_descriptor, STDIN_FILENO) < 0) ||
             (output_descriptor >= 0 &&
              dup2(output_descriptor, STDOUT_FILENO) < 0))
             _exit(RETURN_FAIL);
+        if (lnx_command) {
+            if (setenv(ACE_LNX_TARGET_TERM_VARIABLE, ACE_LNX_PTY_VALUE, 1) !=
+                0)
+                _exit(RETURN_FAIL);
+            if (lnx_pty_mode &&
+                setenv(ACE_LNX_PTY_VARIABLE, ACE_LNX_PTY_VALUE, 1) != 0)
+                _exit(RETURN_FAIL);
+            if (!lnx_pty_mode)
+                (void)unsetenv(ACE_LNX_PTY_VARIABLE);
+        } else {
+            (void)unsetenv(ACE_LNX_PTY_VARIABLE);
+            (void)unsetenv(ACE_LNX_TARGET_TERM_VARIABLE);
+        }
         if (script && setenv(ACE_SCRIPT_INPUT_VARIABLE, script_name, 1) != 0)
             _exit(RETURN_FAIL);
         if (!script)
@@ -764,6 +825,16 @@ LONG RunCommand(BPTR value, ULONG stack, STRPTR arguments, LONG length)
     }
     native_console_title("ACE Shell");
     if (WIFEXITED(status) && WEXITSTATUS(status) == NATIVE_ENDCLI_STATUS) {
+        native_request_endcli();
+        return RETURN_OK;
+    }
+    /* EndCLI normally propagates this through native_publish_result(), but
+       its AROS entry can also return RETURN_OK after setting the CLI flag in
+       the short-lived command child.  The resolved command identity gives
+       the parent the same unambiguous request without depending on that
+       child-local state. */
+    if (WIFEXITED(status) && WEXITSTATUS(status) == RETURN_OK &&
+        native_command_is_endcli(segment)) {
         native_request_endcli();
         return RETURN_OK;
     }

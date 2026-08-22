@@ -1004,3 +1004,32 @@ rewrite previous entries.
   from the proposed allocation sequence is that the slave is opened before
   `fork()` and reused after `setsid()`; `TIOCSCTTY` and all child-side
   terminal/session invariants are still established after `setsid()`.
+
+- Chunks 2 and 3 complete together at the user's direction: `src/lnx.c` now
+  queries the public ACE geometry protocol before the PTY target starts,
+  applies initial and live `TIOCSWINSZ`, enables/resets raw resize reports,
+  preserves query-adjacent typeahead, and translates the finite ACE keyboard
+  table (including distinct Backspace/Delete and UTF-8 continuation safety)
+  to the fixed `xterm-256color` contract. Its bounded output adapter maps
+  xterm clear/alternate-screen transitions to ACE native clear operations and
+  strips unsupported SGR, including indexed color, so unsupported bytes do
+  not leak into ACE's legacy renderer. `COLORTERM` is removed. Added the
+  narrow `native_console_same_endpoint()` helper and `RunCommand()` selection:
+  only ACE's resolved LNX command in an interactive session with identical
+  selected console endpoints and two exportable descriptors receives the PTY
+  marker. Redirected, piped, split-endpoint, and abstract `CON:` cases remain
+  direct; every official LNX invocation marks the target for
+  `TERM=xterm-256color`, while standalone LNX preserves the caller TERM.
+  The focused harness now models the query/resize stream, fragments all input
+  bytes, verifies target geometry/SIGWINCH/output adaptation, and drives a
+  private `ace-user-shell` through `LNX bash --noprofile --norc -i`; the
+  redirection test also proves the scripted direct path. `RunCommand()` also
+  recognizes a successful resolved `EndCLI` command in the parent, repairing
+  its child-local CLI flag hand-off exposed by the interactive fixture. The
+  `test-lnx-pty` target now depends on its real shell, broker, and EndCLI
+  binaries so it cannot accidentally test stale activation code. The sole
+  small test harness deviation is that its synthetic console sends EOF after
+  `EndCLI`, because unlike the GUI it has no owner to close the endpoint.
+  Build/tests: `make -r test-lnx-pty test-shell-redirection`; both passed
+  before the common regression run. No privileged FMM/CRM or device-view
+  component changed.

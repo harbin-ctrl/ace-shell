@@ -272,16 +272,29 @@ live ACE-only label for the lifetime of the broker. Other filesystem types
 return the AmigaDOS "action not known" error.
 
 LNX is the explicit Linux escape hatch. It executes the named Linux program
-directly with execv() and an explicit PATH search, passing the remaining arguments unchanged; it never
-invokes a shell. Its inherited standard input, output, and error streams are
-the ACE Amiga console streams:
+directly with `execv()` and an explicit PATH search, passing the remaining
+arguments unchanged; it never invokes a shell. In a live interactive ACE
+console with unredirected input and output, the official `LNX` command starts
+the Linux target on a private PTY, so interactive programs work as terminals:
 
     LNX /usr/bin/uname -a
     LNX printf hello
+    LNX bash --noprofile --norc -i
 
-There is no automatic host-command fallback. An unrecognized command is an
-AmigaDOS command failure. LNX is the deliberate mechanism for running a Linux
-command.
+That PTY uses `TERM=xterm-256color`, receives the current ACE console size and
+resize notifications, and translates ACE navigation keys to the corresponding
+xterm input sequences. ACE's historical console has no xterm SGR renderer, so
+LNX reduces color attributes to ordinary text and maps clears/alternate-screen
+transitions to ACE's native clear behavior. It does not advertise or pass
+through truecolor.
+
+Any AmigaDOS redirection (`<`, `>`, or `>>`), a piped/scripted shell, separate
+console endpoints, or a nonexportable `CON:` handle stays on LNX's direct
+descriptor path. That preserves byte-exact noninteractive behavior; official
+LNX invocations still give their Linux target `TERM=xterm-256color`, while a
+standalone `./build/LNX` preserves the caller's TERM. There is no automatic
+host-command fallback. An unrecognized command is an AmigaDOS command failure.
+LNX is the deliberate mechanism for running a Linux command.
 
 The broker now performs a read-only discovery pass over host block devices
 when it starts. Filesystem-bearing devices are registered in the initial ACE

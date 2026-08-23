@@ -22,6 +22,7 @@
 #include "ace_appmenu_wayland.h"
 #include "ace_requestor_gui.h"
 #include "console_channel.h"
+#include "console_dispatch.h"
 #include "console_device_bridge.h"
 #include "console_spec.h"
 
@@ -164,6 +165,7 @@ struct console_window {
     uint32_t palette[ACE_CONSOLE_PEN_COUNT];
     guint menu_probe_source;
     guint resize_source;
+    guint damage_source;
     int pending_width;
     int pending_height;
     int title_state;
@@ -906,21 +908,33 @@ static gboolean update_menu_visibility(gpointer data)
  * the whole window for that means handing the compositor a full window's
  * worth of pixels on every frame.
  */
-static void queue_console_damage(struct console_window *console)
+static gboolean flush_console_damage(gpointer data)
 {
+    struct console_window *console = data;
     int x;
     int y;
     int width;
     int height;
 
+    console->damage_source = 0;
     /* Output continues through the live device while a frozen historical
      * surface is displayed. Keep its damage pending until a key returns to
      * the live view. */
     if (ace_console_device_scrollback_active(console->device))
-        return;
+        return G_SOURCE_REMOVE;
     if (ace_console_device_take_damage(console->device, &x, &y, &width,
                                        &height))
         gtk_widget_queue_draw_area(console->drawing_area, x, y, width, height);
+    return G_SOURCE_REMOVE;
+}
+
+static void queue_console_damage(struct console_window *console)
+{
+    /* Parsing and the backing surface stay current for every byte, but only
+     * present the newest surface once per frame.  Fast output can therefore
+     * cross several complete pages without making GTK paint each scroll. */
+    console->damage_source = ace_console_dispatch_schedule_frame(
+        console->damage_source, flush_console_damage, console);
 }
 
 static void draw_text_overlay(struct console_window *console, cairo_t *cr,
@@ -1659,7 +1673,8 @@ static gboolean key_press(GtkWidget *widget, GdkEventKey *event, gpointer data)
                    forwards SIGUSR1 to that command, whose ACE runtime turns
                    it into SIGBREAKF_CTRL_C. */
                 if (console->controller_pid > 0)
-                    (void)kill(console->controller_pid, SIGUSR1);
+                    (void)ace_console_dispatch_control(
+                        console->controller_pid, character);
                 return TRUE;
             }
             if (character == 4) {
@@ -1667,7 +1682,8 @@ static gboolean key_press(GtkWidget *widget, GdkEventKey *event, gpointer data)
                    input for the foreground command: Shell.c observes the
                    resulting SIGBREAKF_CTRL_D after that command completes. */
                 if (console->controller_pid > 0)
-                    (void)kill(console->controller_pid, SIGUSR2);
+                    (void)ace_console_dispatch_control(
+                        console->controller_pid, character);
                 return TRUE;
             }
             if (character == 5 || character == 6) {
@@ -1675,8 +1691,8 @@ static gboolean key_press(GtkWidget *widget, GdkEventKey *event, gpointer data)
                    signals.  Send them to the shell, which brokers them to
                    its foreground task (or retains them for itself). */
                 if (console->controller_pid > 0)
-                    (void)kill(console->controller_pid,
-                               character == 5 ? SIGRTMIN : SIGRTMIN + 1);
+                    (void)ace_console_dispatch_control(
+                        console->controller_pid, character);
                 return TRUE;
             }
             char byte = (char)character;
@@ -1904,6 +1920,10 @@ static void console_destroy(GtkWidget *widget, gpointer data)
     if (console->resize_source != 0) {
         g_source_remove(console->resize_source);
         console->resize_source = 0;
+    }
+    if (console->damage_source != 0) {
+        g_source_remove(console->damage_source);
+        console->damage_source = 0;
     }
     if (console->copy_status_source != 0) {
         g_source_remove(console->copy_status_source);
@@ -2145,9 +2165,11 @@ int main(int argc, char **argv)
     console.menu_probe_source = g_timeout_add(250, update_menu_visibility,
                                               &console);
 
-    g_io_add_watch(g_io_channel_unix_new(console.stream_fd),
-                   G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-                   read_console, &console);
+    if (!ace_console_dispatch_add_output_watch(console.stream_fd,
+                                               read_console, &console)) {
+        fprintf(stderr, "ace-console: cannot watch console output\n");
+        gtk_widget_destroy(window);
+    }
     gtk_main();
     ace_appmenu_wayland_forget();
     unexport_dbus_menu(&console);

@@ -820,11 +820,14 @@ $(BUILD)/broker-identity.o: src/broker_identity.c src/broker_protocol.h src/ace_
 $(BUILD)/brokerctl.o: src/brokerctl.c src/broker_protocol.h src/broker_client.h | $(BUILD)
 	$(CC) $(CFLAGS) -Isrc -c $< -o $@
 
-$(BUILD)/amiga_console.o: src/amiga_console.c src/console_channel.h src/console_device_bridge.h src/ace_appmenu_wayland.h compat/include/libraries/iffparse.h compat/include/proto/iffparse.h | $(BUILD)
+$(BUILD)/amiga_console.o: src/amiga_console.c src/console_channel.h src/console_dispatch.h src/console_device_bridge.h src/ace_appmenu_wayland.h compat/include/libraries/iffparse.h compat/include/proto/iffparse.h | $(BUILD)
 	$(CC) $(CFLAGS) -pthread $(GTK_CFLAGS) $(GFX_CFLAGS) -I$(COMPAT) -Isrc -c $< -o $@
 
 $(BUILD)/console_channel.o: src/console_channel.c src/console_channel.h | $(BUILD)
 	$(CC) $(CFLAGS) -Isrc -c $< -o $@
+
+$(BUILD)/console_dispatch.o: src/console_dispatch.c src/console_dispatch.h | $(BUILD)
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) -Isrc -c $< -o $@
 
 $(BUILD)/ace-appmenu-wayland.o: src/ace_appmenu_wayland.c src/ace_appmenu_wayland.h | $(BUILD)
 	$(CC) $(CFLAGS) -pthread $(GTK_CFLAGS) $(WAYLAND_CFLAGS) -Isrc -c $< -o $@
@@ -899,6 +902,12 @@ $(BUILD)/console-channel-test.o: tests/console_channel_test.c src/console_channe
 
 $(BUILD)/console-channel-test: $(BUILD)/console-channel-test.o $(BUILD)/console_channel.o
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
+
+$(BUILD)/console-dispatch-test.o: tests/console_dispatch_test.c src/console_dispatch.h | $(BUILD)
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) -Isrc -c $< -o $@
+
+$(BUILD)/console-dispatch-test: $(BUILD)/console-dispatch-test.o $(BUILD)/console_dispatch.o
+	$(CC) $(CFLAGS) $(filter-out %.h,$^) $(GTK_LIBS) -o $@
 
 $(BUILD)/aros-exec-runtime.o: src/aros_exec_runtime.c src/aros_exec_runtime.h | $(BUILD)
 	$(CC) $(CFLAGS) -pthread $(AROS_REAL_CFLAGS) $(AROS_REAL_INCLUDES) -c $< -o $@
@@ -1342,7 +1351,7 @@ $(BUILD)/ace-brokerctl: $(BUILD)/brokerctl.o $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
 
-$(BUILD)/ace-console: $(BUILD)/amiga_console.o $(BUILD)/ace-requestor-gui.o $(BROKER_CLIENT_OBJS) $(BUILD)/console_channel.o $(BUILD)/console_spec.o $(BUILD)/ace-appmenu-wayland.o $(BUILD)/console_device_bridge.o $(BUILD)/aros-console-editor.o $(BUILD)/aros-console-editor-stubs.o $(BUILD)/aros-con-support.o $(BUILD)/aros-exec-runtime.o $(BUILD)/clipboard-device.o $(BUILD)/clipboard-bridge.o $(BUILD)/iffparse-clipboard.o $(BUILD)/ace-vim-runtime.o \
+$(BUILD)/ace-console: $(BUILD)/amiga_console.o $(BUILD)/ace-requestor-gui.o $(BROKER_CLIENT_OBJS) $(BUILD)/console_channel.o $(BUILD)/console_dispatch.o $(BUILD)/console_spec.o $(BUILD)/ace-appmenu-wayland.o $(BUILD)/console_device_bridge.o $(BUILD)/aros-console-editor.o $(BUILD)/aros-console-editor-stubs.o $(BUILD)/aros-con-support.o $(BUILD)/aros-exec-runtime.o $(BUILD)/clipboard-device.o $(BUILD)/clipboard-bridge.o $(BUILD)/iffparse-clipboard.o $(BUILD)/ace-vim-runtime.o \
                       $(BUILD)/aros-boopsi-runtime.o $(AROS_BOOPSI_OBJS) \
                       $(BUILD)/aros-graphics-runtime.o $(AROS_GRAPHICS_OBJS) $(AROS_ARSUPPORT_OBJS)
 	$(CC) $(CFLAGS) -pthread $(filter-out %.h,$^) $(GTK_LIBS) $(GFX_LIBS) $(WAYLAND_LIBS) -o $@
@@ -1752,6 +1761,9 @@ test-console-device: $(BUILD)/console-device-test
 test-console-channel: $(BUILD)/console-channel-test
 	$(BUILD)/console-channel-test
 
+test-console-dispatch: $(BUILD)/console-dispatch-test
+	$(BUILD)/console-dispatch-test
+
 test-console-spec: $(BUILD)/console-spec-test
 	$(BUILD)/console-spec-test
 
@@ -2034,7 +2046,7 @@ test-tine: all tine
 	python3 tests/tine_console_query_test.py
 	python3 tests/tine_screen_trace_test.py
 
-.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty
+.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty
 AROS_CLIP_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Clip.c
 $(BUILD)/Clip.o: $(AROS_CLIP_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-sign-compare -I$(COMPAT) $(AROS_SHCOMMAND_CFLAGS) -c $< -o $@

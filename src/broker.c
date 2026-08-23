@@ -1877,7 +1877,13 @@ static int normalize_mapped_path(const char *base, const char *path,
             errno = ENAMETOOLONG;
             return -1;
         }
-        strcpy(result, base);
+        /* normalize_amiga_path() resolves a path one component at a time and
+           passes the buffer it is building as both the base and the result,
+           so this is regularly a copy onto itself -- which strcpy(), whose
+           parameters are restrict-qualified, does not allow.  Harmless with
+           this libc and reported by valgrind on every component. */
+        if (result != base)
+            strcpy(result, base);
     }
 
     cursor = combined;
@@ -2277,9 +2283,15 @@ static int canonical_assign_target(struct broker_session *session,
     struct stat information;
 
     if (resolve_path(session, value, host, host_size, false) != 0 ||
-        stat(host, &information) != 0 || !S_ISDIR(information.st_mode)) {
+        stat(host, &information) != 0) {
         if (!errno)
             errno = ENOTDIR;
+        return -1;
+    }
+    /* Reached without any call having failed, so errno holds whatever the
+       last unrelated one left there rather than a reason for this. */
+    if (!S_ISDIR(information.st_mode)) {
+        errno = ENOTDIR;
         return -1;
     }
     return name_from_host_with_mappings(host, logical, logical_size);

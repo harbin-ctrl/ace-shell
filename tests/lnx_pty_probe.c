@@ -152,7 +152,11 @@ static int terminal_output(void)
     static const unsigned char bytes[] =
         "plain\033[2J\033[Hcursor\033[31mred\033[0m"
         "\033[38;5;196mindexed\033[48;5;23mbackground\033[0m"
-        "\033[?1049halt\033[?1049lrest\n";
+        "\033[?1049halt\033[?1049lrest"
+        "\033(Bpi@frambo\033(B:~ $\033(B"
+        "\033]0;pi@frambo:~\007"
+        "\033]0;another-title\033\\"
+        "prompt\n";
 
     for (size_t index = 0; index < sizeof(bytes) - 1; index++) {
         struct timespec pause_time = {0, 1000000};

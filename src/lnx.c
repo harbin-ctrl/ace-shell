@@ -107,6 +107,15 @@ struct ace_input_parser {
 struct terminal_output_parser {
     unsigned char sequence[ACE_INPUT_SEQUENCE_MAX];
     size_t sequence_length;
+    int kind;
+};
+
+enum terminal_output_sequence_kind {
+    TERMINAL_OUTPUT_NONE = 0,
+    TERMINAL_OUTPUT_ESCAPE,
+    TERMINAL_OUTPUT_CSI,
+    TERMINAL_OUTPUT_OSC,
+    TERMINAL_OUTPUT_OSC_ESCAPE,
 };
 
 static size_t relay_pending(const struct relay_buffer *buffer)
@@ -596,9 +605,22 @@ static int terminal_output_emit_sequence(struct terminal_output_parser *parser,
     if (length >= 3 && sequence[0] == '\033' && sequence[1] == '[' &&
         sequence[length - 1] == 'm') {
         parser->sequence_length = 0;
+        parser->kind = TERMINAL_OUTPUT_NONE;
+        return 0;
+    }
+    /* xterm selects the character set around ordinary shell prompt text
+       with ESC ( B (and sometimes ESC ) 0).  ACE has no character-set mode;
+       the designation is therefore metadata and must not become visible
+       prompt text. */
+    if (length == 3 && sequence[0] == '\033' &&
+        (sequence[1] == '(' || sequence[1] == ')') &&
+        (sequence[2] == '0' || sequence[2] == 'B')) {
+        parser->sequence_length = 0;
+        parser->kind = TERMINAL_OUTPUT_NONE;
         return 0;
     }
     parser->sequence_length = 0;
+    parser->kind = TERMINAL_OUTPUT_NONE;
     return relay_append(output, sequence, length);
 }
 
@@ -611,19 +633,61 @@ static int terminal_output_feed(struct terminal_output_parser *parser,
     for (index = 0; index < length; index++) {
         unsigned char byte = bytes[index];
 
+        if (parser->kind == TERMINAL_OUTPUT_OSC ||
+            parser->kind == TERMINAL_OUTPUT_OSC_ESCAPE) {
+            /* OSC is normally terminated by BEL; xterm also accepts ST
+               (ESC backslash).  Window-title OSC 0 is presentation metadata,
+               not text for the Amiga console. */
+            if (parser->kind == TERMINAL_OUTPUT_OSC_ESCAPE) {
+                if (byte == '\\' || byte == 0x9c) {
+                    parser->sequence_length = 0;
+                    parser->kind = TERMINAL_OUTPUT_NONE;
+                } else if (byte == '\033') {
+                    parser->kind = TERMINAL_OUTPUT_OSC_ESCAPE;
+                } else {
+                    parser->kind = TERMINAL_OUTPUT_OSC;
+                }
+            } else if (byte == '\007' || byte == 0x9c) {
+                parser->sequence_length = 0;
+                parser->kind = TERMINAL_OUTPUT_NONE;
+            } else if (byte == '\033') {
+                parser->kind = TERMINAL_OUTPUT_OSC_ESCAPE;
+            }
+            continue;
+        }
+
         if (!parser->sequence_length) {
             if (byte == '\033') {
                 parser->sequence[0] = byte;
                 parser->sequence_length = 1;
+                parser->kind = TERMINAL_OUTPUT_ESCAPE;
             } else if (relay_append(output, &byte, 1) != 0) {
                 return -1;
             }
             continue;
         }
+
+        if (parser->kind == TERMINAL_OUTPUT_ESCAPE &&
+            parser->sequence_length == 1) {
+            if (byte == '[') {
+                parser->sequence[parser->sequence_length++] = byte;
+                parser->kind = TERMINAL_OUTPUT_CSI;
+                continue;
+            }
+            if (byte == ']') {
+                parser->sequence_length = 0;
+                parser->kind = TERMINAL_OUTPUT_OSC;
+                continue;
+            }
+        }
         parser->sequence[parser->sequence_length++] = byte;
         if (parser->sequence_length == sizeof(parser->sequence) ||
-            (parser->sequence_length == 2 && byte != '[') ||
-            (parser->sequence_length > 2 && ace_sequence_final(byte))) {
+            (parser->kind == TERMINAL_OUTPUT_ESCAPE &&
+             parser->sequence_length == 2 && byte != '(' && byte != ')') ||
+            (parser->kind == TERMINAL_OUTPUT_ESCAPE &&
+             parser->sequence_length == 3) ||
+            (parser->kind == TERMINAL_OUTPUT_CSI &&
+             parser->sequence_length > 2 && ace_sequence_final(byte))) {
             if (terminal_output_emit_sequence(parser, output) != 0)
                 return -1;
         }
@@ -636,9 +700,18 @@ static int terminal_output_flush(struct terminal_output_parser *parser,
 {
     if (!parser->sequence_length)
         return 0;
+    /* An unterminated OSC is metadata too.  Dropping it avoids exposing a
+       partial title such as "]0;hostname" when the Linux child exits. */
+    if (parser->kind == TERMINAL_OUTPUT_OSC ||
+        parser->kind == TERMINAL_OUTPUT_OSC_ESCAPE) {
+        parser->sequence_length = 0;
+        parser->kind = TERMINAL_OUTPUT_NONE;
+        return 0;
+    }
     if (relay_append(output, parser->sequence, parser->sequence_length) != 0)
         return -1;
     parser->sequence_length = 0;
+    parser->kind = TERMINAL_OUTPUT_NONE;
     return 0;
 }
 

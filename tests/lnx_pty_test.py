@@ -303,7 +303,8 @@ def test_isolated_supervisor(lnx, probe):
     terminal_output = protocol_output(terminal_output)
     expected_terminal = (
         b"plain\x9b1;1H\x9bJ\x9b1;1Hcursorredindexedbackground"
-        b"\x9b1;1H\x9bJalt\x9b1;1H\x9bJrest\r\n"
+        b"\x9b1;1H\x9bJalt\x9b1;1H\x9bJrest"
+        b"pi@frambo:~ $prompt\r\n"
     )
     if terminal_status != 0 or expected_terminal not in terminal_output:
         fail("PTY output adaptation did not reduce xterm output predictably",

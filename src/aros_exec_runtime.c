@@ -845,6 +845,13 @@ void CloseDevice(struct IORequest *request)
     pthread_cond_destroy(&unit->input_condition);
     pthread_cond_destroy(&unit->output_condition);
     pthread_mutex_destroy(&unit->lock);
+    /* The unit owns both queues.  They are grown by host_write() and
+       ace_aros_console_feed() rather than allocated with the unit, so
+       freeing the unit alone left them behind -- a leak per OpenDevice /
+       CloseDevice pair, in a process that opens the console again on every
+       fresh handle. */
+    free(unit->input);
+    free(unit->output);
     free(unit);
 }
 

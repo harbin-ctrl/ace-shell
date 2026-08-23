@@ -11,6 +11,7 @@
 #include <pango/pango.h>
 #include <signal.h>
 #include <stdint.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -166,6 +167,10 @@ struct console_window {
     guint menu_probe_source;
     guint resize_source;
     guint damage_source;
+    guint overload_frame_source;
+    guint overload_settle_source;
+    gboolean render_deferred;
+    uint64_t presented_grid_fingerprint;
     int pending_width;
     int pending_height;
     int title_state;
@@ -1851,6 +1856,96 @@ static gboolean button_release(GtkWidget *widget, GdkEventButton *event,
  * even under a flood.
  */
 #define OUTPUT_DRAIN_MAX (16 * 1024)
+/* A minimum spacing between snapshot opportunities, not a promised frame
+ * rate. Low-priority output parsing and GTK events remain free to run first. */
+#define OVERLOAD_QUIET_MILLISECONDS 16
+
+static int queued_output_bytes(struct console_window *console)
+{
+    int pending = 0;
+
+    if (console->stream_fd < 0 ||
+        ioctl(console->stream_fd, FIONREAD, &pending) != 0)
+        return 0;
+    return pending > 0 ? pending : 0;
+}
+
+static gboolean finish_overload_frame(gpointer data)
+{
+    struct console_window *console = data;
+
+    console->overload_settle_source = 0;
+    if (queued_output_bytes(console) != 0) {
+        console->overload_settle_source = g_timeout_add_full(
+            G_PRIORITY_LOW, OVERLOAD_QUIET_MILLISECONDS,
+            finish_overload_frame, console, NULL);
+        return G_SOURCE_REMOVE;
+    }
+    if (console->overload_frame_source != 0) {
+        g_source_remove(console->overload_frame_source);
+        console->overload_frame_source = 0;
+    }
+    if (console->presented_grid_fingerprint !=
+        ace_console_device_grid_fingerprint(console->device)) {
+        ace_console_device_render_grid(console->device);
+        console->presented_grid_fingerprint =
+            ace_console_device_grid_fingerprint(console->device);
+        (void)flush_console_damage(console);
+    }
+    console->render_deferred = FALSE;
+    ace_console_device_set_render_deferred(console->device, FALSE);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean present_overload_frame(gpointer data)
+{
+    struct console_window *console = data;
+
+    if (!console->render_deferred) {
+        console->overload_frame_source = 0;
+        return G_SOURCE_REMOVE;
+    }
+    if (console->presented_grid_fingerprint !=
+        ace_console_device_grid_fingerprint(console->device)) {
+        ace_console_device_render_grid(console->device);
+        console->presented_grid_fingerprint =
+            ace_console_device_grid_fingerprint(console->device);
+        (void)flush_console_damage(console);
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+static void arm_overload_settle(struct console_window *console)
+{
+    if (console->overload_settle_source != 0)
+        g_source_remove(console->overload_settle_source);
+    console->overload_settle_source = g_timeout_add_full(
+        G_PRIORITY_LOW, OVERLOAD_QUIET_MILLISECONDS,
+        finish_overload_frame, console, NULL);
+}
+
+static void begin_overload_if_needed(struct console_window *console)
+{
+    size_t capacity;
+
+    if (console->render_deferred)
+        return;
+    capacity = ace_console_device_grid_capacity(console->device);
+    if (capacity == 0 || (size_t)queued_output_bytes(console) <= capacity)
+        return;
+    console->render_deferred = TRUE;
+    console->presented_grid_fingerprint =
+        ace_console_device_grid_fingerprint(console->device);
+    ace_console_device_set_render_deferred(console->device, TRUE);
+    if (console->damage_source != 0) {
+        g_source_remove(console->damage_source);
+        console->damage_source = 0;
+    }
+    if (console->overload_frame_source == 0)
+        console->overload_frame_source = g_timeout_add_full(
+            G_PRIORITY_LOW, OVERLOAD_QUIET_MILLISECONDS,
+            present_overload_frame, console, NULL);
+}
 
 static gboolean read_console(GIOChannel *channel, GIOCondition condition,
                              gpointer data)
@@ -1866,6 +1961,8 @@ static gboolean read_console(GIOChannel *channel, GIOCondition condition,
             gtk_widget_destroy(console->window);
         return G_SOURCE_REMOVE;
     }
+
+    begin_overload_if_needed(console);
 
     while (drained < OUTPUT_DRAIN_MAX) {
         ssize_t length = ace_console_channel_receive(&console->channel,
@@ -1896,8 +1993,12 @@ static gboolean read_console(GIOChannel *channel, GIOCondition condition,
         break;
     }
 
-    if (drained != 0)
-        queue_console_damage(console);
+    if (drained != 0) {
+        if (console->render_deferred)
+            arm_overload_settle(console);
+        else
+            queue_console_damage(console);
+    }
     if (closed) {
         if (console->window)
             gtk_widget_destroy(console->window);
@@ -1924,6 +2025,14 @@ static void console_destroy(GtkWidget *widget, gpointer data)
     if (console->damage_source != 0) {
         g_source_remove(console->damage_source);
         console->damage_source = 0;
+    }
+    if (console->overload_settle_source != 0) {
+        g_source_remove(console->overload_settle_source);
+        console->overload_settle_source = 0;
+    }
+    if (console->overload_frame_source != 0) {
+        g_source_remove(console->overload_frame_source);
+        console->overload_frame_source = 0;
     }
     if (console->copy_status_source != 0) {
         g_source_remove(console->copy_status_source);

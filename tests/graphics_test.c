@@ -593,6 +593,53 @@ static void test_complement_inverts_pen_index(void)
     free(frame);
 }
 
+static void test_deferred_grid_render(void)
+{
+    Object *unit;
+    uint8_t *before;
+    uint8_t *during;
+    uint8_t *intermediate;
+    uint8_t *still_intermediate;
+    uint8_t *final;
+    size_t frame_size = (size_t)WIN_WIDTH * WIN_HEIGHT * 3;
+    int column;
+
+    SetDrMd(g_rp, JAM2);
+    SetAPen(g_rp, 0);
+    RectFill(g_rp, 0, 0, WIN_WIDTH - 1, WIN_HEIGHT - 1);
+    unit = test_unit_construction();
+    before = read_frame();
+
+    ace_gfx_set_render_deferred(g_rp, 1);
+    write_text(unit, "FRAME");
+    during = read_frame();
+    assert(memcmp(before, during, frame_size) == 0);
+
+    ace_gfx_render_grid(g_rp);
+    intermediate = read_frame();
+    assert(memcmp(before, intermediate, frame_size) != 0);
+    for (column = 0; column < 5; column++)
+        assert(cell_has_ink(intermediate, column, 0));
+
+    /* A snapshot must leave deferral enabled: subsequent parser work updates
+       the grid without changing the frame that GTK is currently showing. */
+    write_text(unit, "NEXT");
+    still_intermediate = read_frame();
+    assert(memcmp(intermediate, still_intermediate, frame_size) == 0);
+
+    ace_gfx_set_render_deferred(g_rp, 0);
+    ace_gfx_render_grid(g_rp);
+    final = read_frame();
+    assert(memcmp(intermediate, final, frame_size) != 0);
+
+    free(final);
+    free(still_intermediate);
+    free(intermediate);
+    free(during);
+    free(before);
+    DisposeObject(unit);
+}
+
 int main(void)
 {
     test_class_construction();
@@ -633,6 +680,7 @@ int main(void)
     test_cursor_after_partial_cell_scroll();
     test_scroll_raster_direction();
     test_complement_inverts_pen_index();
+    test_deferred_grid_render();
 
     ace_gfx_destroy_rastport(g_rp);
     ace_gfx_unload_font(g_font);

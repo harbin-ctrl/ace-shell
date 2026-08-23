@@ -567,6 +567,7 @@ struct ace_gfx_rp_private {
     int cursor_column;
     int cursor_row;
     int cursor_inverted;
+    int render_deferred;
     /* Union of everything drawn since the last ace_gfx_take_damage(), as an
      * inclusive rectangle. Empty when damage_x1 < damage_x0. */
     int damage_x0;
@@ -1178,6 +1179,14 @@ void ace_gfx_damage_all(struct RastPort *rp)
         damage_all(priv);
 }
 
+void ace_gfx_set_render_deferred(struct RastPort *rp, int deferred)
+{
+    struct ace_gfx_rp_private *priv = rp ? rp->RP_Extra : NULL;
+
+    if (priv)
+        priv->render_deferred = deferred != 0;
+}
+
 void ace_gfx_set_pen_rgb(struct RastPort *rp, int pen, uint32_t rgb)
 {
     struct ace_gfx_rp_private *priv;
@@ -1321,7 +1330,8 @@ static void render_cell(struct ace_gfx_rp_private *priv, struct TextFont *font,
     int top = row * priv->cell_height;
     double r, g, b;
 
-    if (!cell || !cell->valid || !font || x >= priv->width ||
+    if (priv->render_deferred || !cell || !cell->valid || !font ||
+        x >= priv->width ||
         top >= priv->height)
         return;
     font_private = (struct ace_gfx_font_private *)font;
@@ -1407,6 +1417,11 @@ static void apply_complement(struct RastPort *rp, int x0, int y0, int x1,
         }
     }
 
+    if (priv->render_deferred) {
+        cell_invalidate_box(priv, x0, y0, x1, y1);
+        return;
+    }
+
     for (pen = 0; pen < ACE_GFX_PEN_COUNT; pen++)
         pen_pixels[pen] = pen_pixel(priv, pen);
 
@@ -1424,6 +1439,87 @@ static void apply_complement(struct RastPort *rp, int x0, int y0, int x1,
                 row[x] = 0xff000000u | xor_rgb(row[x] & 0x00ffffffu);
         }
     }
+}
+
+void ace_gfx_render_grid(struct RastPort *rp)
+{
+    struct ace_gfx_rp_private *priv = rp ? rp->RP_Extra : NULL;
+    int was_deferred;
+    int row;
+    int column;
+
+    if (!priv || !rp->Font)
+        return;
+    was_deferred = priv->render_deferred;
+    priv->render_deferred = 0;
+    cairo_surface_flush(priv->surface);
+    fill_rect_raw(priv, 0, 0, priv->width - 1, priv->height - 1,
+                  pen_pixel(priv, rp->BgPen));
+    cairo_surface_mark_dirty_rectangle(priv->surface, 0, priv->origin_y,
+                                       priv->width, priv->height);
+    for (row = 0; row < priv->cell_rows; row++) {
+        for (column = 0; column < priv->cell_columns; column++) {
+            const struct ace_gfx_cell *cell = cell_at(priv, column, row);
+            UBYTE foreground;
+            UBYTE background;
+
+            if (!cell || !cell->valid)
+                continue;
+            foreground = cell->foreground_pen;
+            background = cell->background_pen;
+            if (priv->cursor_inverted && priv->cursor_column == column &&
+                priv->cursor_row == row) {
+                foreground ^= ACE_GFX_PEN_MASK;
+                background ^= ACE_GFX_PEN_MASK;
+            }
+            render_cell(priv, rp->Font, column, row, cell,
+                        foreground, background);
+        }
+    }
+    damage_all(priv);
+    priv->render_deferred = was_deferred;
+}
+
+static uint64_t fingerprint_bytes(uint64_t fingerprint, const void *data,
+                                  size_t length)
+{
+    const unsigned char *bytes = data;
+
+    while (length-- != 0) {
+        fingerprint ^= *bytes++;
+        fingerprint *= UINT64_C(1099511628211);
+    }
+    return fingerprint;
+}
+
+uint64_t ace_gfx_grid_fingerprint(struct RastPort *rp)
+{
+    struct ace_gfx_rp_private *priv = rp ? rp->RP_Extra : NULL;
+    uint64_t fingerprint = UINT64_C(1469598103934665603);
+    size_t cell_count;
+
+    if (!priv)
+        return 0;
+    cell_count = (size_t)priv->cell_columns * (size_t)priv->cell_rows;
+    fingerprint = fingerprint_bytes(fingerprint, &priv->cell_columns,
+                                    sizeof(priv->cell_columns));
+    fingerprint = fingerprint_bytes(fingerprint, &priv->cell_rows,
+                                    sizeof(priv->cell_rows));
+    fingerprint = fingerprint_bytes(fingerprint, priv->palette,
+                                    sizeof(priv->palette));
+    fingerprint = fingerprint_bytes(fingerprint, &rp->BgPen,
+                                    sizeof(rp->BgPen));
+    fingerprint = fingerprint_bytes(fingerprint, priv->cells,
+                                    cell_count * sizeof(*priv->cells));
+    fingerprint = fingerprint_bytes(fingerprint, &priv->cursor_inverted,
+                                    sizeof(priv->cursor_inverted));
+    if (priv->cursor_inverted) {
+        fingerprint = fingerprint_bytes(fingerprint, &priv->cursor_column,
+                                        sizeof(priv->cursor_column));
+        fingerprint = fingerprint_bytes(fingerprint, &priv->cursor_row,
+                                        sizeof(priv->cursor_row));
+    }
+    return fingerprint;
 }
 
 /* Clips an inclusive box to the surface. Returns 0 when nothing is left. */
@@ -1447,6 +1543,15 @@ void RectFill(struct RastPort *rp, WORD xMin, WORD yMin, WORD xMax, WORD yMax)
     priv = rp->RP_Extra;
     if (!clip_box(priv, xMin, yMin, xMax, yMax, &x0, &y0, &x1, &y1))
         return;
+
+    if (priv->render_deferred) {
+        if (rp->DrawMode & COMPLEMENT)
+            apply_complement(rp, x0, y0, x1, y1);
+        else
+            cell_fill_box(priv, x0, y0, x1, y1, rp->FgPen,
+                          rp->AlgoStyle);
+        return;
+    }
 
     raw_begin(priv);
     if (rp->DrawMode & COMPLEMENT)
@@ -1545,6 +1650,12 @@ void ScrollRaster(struct RastPort *rp, WORD dx, WORD dy, WORD xMin, WORD yMin,
     adx = dx < 0 ? -dx : dx;
     ady = dy < 0 ? -dy : dy;
 
+    if (priv->render_deferred) {
+        update_cells_after_scroll(priv, dx, dy, x0, y0, x1, y1,
+                                  rp->FgPen, rp->AlgoStyle);
+        return;
+    }
+
     /*
      * The Amiga sign convention: positive dx/dy moves the pixels left/up.
      * The surviving pixels are moved with a per-row memmove -- source and
@@ -1636,9 +1747,7 @@ void Text(struct RastPort *rp, CONST_STRPTR string, ULONG count)
     if (!rp || !string || !rp->Font || cell_w <= 0 || cell_h <= 0 || count == 0)
         return;
     priv = rp->RP_Extra;
-    font = (struct ace_gfx_font_private *)rp->Font;
     style = style_index(rp->AlgoStyle);
-    ensure_glyph_cache(font, style);
 
     /*
      * INVERSVID swaps the two pens for the duration of the draw, and the
@@ -1666,6 +1775,23 @@ void Text(struct RastPort *rp, CONST_STRPTR string, ULONG count)
     }
     top = pen_y - baseline;
     run_w = (int)drawn * cell_w;
+
+    for (i = 0; i < drawn; i++) {
+        int x = pen_x + (int)i * cell_w;
+        unsigned char code = (unsigned char)string[i];
+
+        if (x % cell_w == 0 && top % cell_h == 0)
+            cell_record(priv, x / cell_w, top / cell_h, code,
+                        rp->AlgoStyle, (UBYTE)opaque,
+                        (UBYTE)fg_pen, (UBYTE)bg_pen);
+    }
+    if (priv->render_deferred) {
+        rp->cp_x = (WORD)(pen_x + (int)count * cell_w);
+        return;
+    }
+
+    font = (struct ace_gfx_font_private *)rp->Font;
+    ensure_glyph_cache(font, style);
 
     if (opaque) {
         raw_begin(priv);
@@ -1717,15 +1843,6 @@ void Text(struct RastPort *rp, CONST_STRPTR string, ULONG count)
     }
     cairo_restore(priv->cr);
 
-    for (i = 0; i < drawn; i++) {
-        int x = pen_x + (int)i * cell_w;
-        unsigned char code = (unsigned char)string[i];
-
-        if (x % cell_w == 0 && top % cell_h == 0)
-            cell_record(priv, x / cell_w, top / cell_h, code,
-                        rp->AlgoStyle, (UBYTE)opaque,
-                        (UBYTE)fg_pen, (UBYTE)bg_pen);
-    }
     damage_add(priv, pen_x, top, pen_x + run_w - 1, top + cell_h - 1);
     rp->cp_x = (WORD)(pen_x + (int)count * cell_w);
 }

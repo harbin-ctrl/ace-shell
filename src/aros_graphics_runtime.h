@@ -105,6 +105,13 @@ int ace_gfx_take_damage(struct RastPort *rp, int *x_out, int *y_out,
 /* Marks the whole surface as needing repaint, e.g. after a resize. */
 void ace_gfx_damage_all(struct RastPort *rp);
 
+/* High-output path: keep the logical character grid current while
+ * suppressing pixel work, and rebuild complete pixel snapshots from it when
+ * the GUI has an opportunity to present. */
+void ace_gfx_set_render_deferred(struct RastPort *rp, int deferred);
+void ace_gfx_render_grid(struct RastPort *rp);
+uint64_t ace_gfx_grid_fingerprint(struct RastPort *rp);
+
 /* Replaces one pen's RGB entry, e.g. after a screen DrawInfo remap. */
 void ace_gfx_set_pen_rgb(struct RastPort *rp, int pen, uint32_t rgb);
 

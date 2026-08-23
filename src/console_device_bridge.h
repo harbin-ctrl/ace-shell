@@ -86,6 +86,17 @@ int ace_console_device_scrollback_lines(struct ace_console_device *device);
 int ace_console_device_cell_size(struct ace_console_device *device,
                                  int *width_out, int *height_out);
 
+/* Number of character cells in the visible grid. */
+size_t ace_console_device_grid_capacity(struct ace_console_device *device);
+
+/* Suppress backing-surface work while retaining parser/grid updates, then
+ * rebuild one complete backing frame from the current grid. */
+void ace_console_device_set_render_deferred(struct ace_console_device *device,
+                                            int deferred);
+void ace_console_device_render_grid(struct ace_console_device *device);
+uint64_t ace_console_device_grid_fingerprint(
+    struct ace_console_device *device);
+
 /* Returned strings are heap allocated and must be freed by the caller. They
    contain terminal control sequences translated to selectable text. */
 char *ace_console_device_copy_all(struct ace_console_device *device,

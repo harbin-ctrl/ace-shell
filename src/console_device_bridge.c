@@ -1074,6 +1074,36 @@ int ace_console_device_cell_size(struct ace_console_device *device,
     return device_cell_size(device, width_out, height_out);
 }
 
+size_t ace_console_device_grid_capacity(struct ace_console_device *device)
+{
+    int cell_width;
+    int cell_height;
+
+    if (!device || device_cell_size(device, &cell_width, &cell_height) != 0)
+        return 0;
+    return ((size_t)device->amiga_window.Width / (size_t)cell_width) *
+           ((size_t)device->amiga_window.Height / (size_t)cell_height);
+}
+
+void ace_console_device_set_render_deferred(struct ace_console_device *device,
+                                            int deferred)
+{
+    if (device)
+        ace_gfx_set_render_deferred(device->rp, deferred);
+}
+
+void ace_console_device_render_grid(struct ace_console_device *device)
+{
+    if (device)
+        ace_gfx_render_grid(device->rp);
+}
+
+uint64_t ace_console_device_grid_fingerprint(
+    struct ace_console_device *device)
+{
+    return device ? ace_gfx_grid_fingerprint(device->rp) : 0;
+}
+
 char *ace_console_device_copy_all(struct ace_console_device *device,
                                    size_t *length_out)
 {

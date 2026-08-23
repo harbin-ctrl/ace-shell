@@ -304,6 +304,7 @@ def test_isolated_supervisor(lnx, probe):
     expected_terminal = (
         b"plain\x9b1;1H\x9bJ\x9b1;1Hcursorredindexedbackground"
         b"\x9b1;1H\x9bJalt\x9b1;1H\x9bJrest"
+        b'Bot"filename" 123L, 456B'
         b"pi@frambo:~ $prompt\r\n"
     )
     if terminal_status != 0 or expected_terminal not in terminal_output:
@@ -311,6 +312,9 @@ def test_isolated_supervisor(lnx, probe):
              terminal_output)
     if b"\033[31m" in terminal_output or b"\033[38;5;196m" in terminal_output:
         fail("PTY output adaptation leaked unsupported xterm SGR", terminal_output)
+    if b"\033[1;28r" in terminal_output or b"[1;28r" in terminal_output:
+        fail("PTY output adaptation leaked xterm scrolling margins",
+             terminal_output)
 
     incomplete_status, incomplete_output = run_socket(
         lnx, [probe, "terminal-output-incomplete"],

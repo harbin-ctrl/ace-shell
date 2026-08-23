@@ -598,6 +598,19 @@ static int terminal_output_emit_sequence(struct terminal_output_parser *parser,
         parser->sequence_length = 0;
         return 0;
     }
+    /* DECSTBM selects xterm's top and bottom scrolling margins.  The Amiga
+       console has insert/delete-line and whole-window scroll operations but
+       no scrolling-region command: final 'r' is deliberately unassigned in
+       its CSI table.  Letting Vim's ESC [ 1 ; 28 r reach that parser exposes
+       the unsupported tail as "[1;28r" on screen.  There is no faithful
+       native sequence to emit, so consume the xterm-only mode command.  Vim
+       still redraws through the supported cursor, line, and erase commands. */
+    if (length >= 3 && sequence[0] == '\033' && sequence[1] == '[' &&
+        sequence[length - 1] == 'r') {
+        parser->sequence_length = 0;
+        parser->kind = TERMINAL_OUTPUT_NONE;
+        return 0;
+    }
     /* The imported AROS stdconclass parser has no SGR dispatcher.  Keep the
        selected TERM truthful about cursor/input behavior, but reduce ANSI
        8/16/indexed color attributes to the ACE default text pen rather than

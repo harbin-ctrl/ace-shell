@@ -1407,15 +1407,20 @@ static char *read_clipboard_text(size_t *length_out)
                 goto close_iff;
             if (length + (size_t)actual + 1 > capacity) {
                 size_t new_capacity = capacity ? capacity : 256;
+                char *grown;
 
                 while (new_capacity < length + (size_t)actual + 1) {
                     if (new_capacity > SIZE_MAX / 2)
                         goto close_iff;
                     new_capacity *= 2;
                 }
-                text = realloc(text, new_capacity);
-                if (!text)
+                /* Not onto text itself: realloc() returning NULL leaves the
+                   old block allocated, and assigning over the only pointer
+                   to it is how it would be lost. */
+                grown = realloc(text, new_capacity);
+                if (!grown)
                     goto close_iff;
+                text = grown;
                 capacity = new_capacity;
             }
             memcpy(text + length, buffer, (size_t)actual);

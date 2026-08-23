@@ -377,7 +377,10 @@ int amiga_console_FeedInput(struct amiga_console_unit *unit, const void *data,
         unit->input = new_input;
         unit->input_capacity = capacity;
     }
-    memcpy(unit->input + unit->input_length, data, length);
+    /* A zero-length write with a NULL buffer is a legitimate no-op for the
+       caller, and memcpy() is not allowed a NULL source even for none. */
+    if (length)
+        memcpy(unit->input + unit->input_length, data, length);
     unit->input_length += length;
     pthread_cond_signal(&unit->input_condition);
     pthread_mutex_unlock(&unit->lock);

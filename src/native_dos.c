@@ -1035,6 +1035,8 @@ BPTR native_console_open(const char *specification)
 {
     struct native_console_handle *handle;
     struct native_console_instance *instance = NULL;
+    int input_fd = -1;
+    int output_fd = -1;
 
     native_init_stdio_handles();
     handle = calloc(1, sizeof(*handle));
@@ -1068,9 +1070,22 @@ BPTR native_console_open(const char *specification)
         native_ioerr = ERROR_NO_FREE_STORE;
         return BNULL;
     }
-    handle->input = fdopen(dup(instance->fd), "rb");
-    handle->output = fdopen(dup(instance->fd), "wb");
+    /* Each descriptor is held until fdopen() has taken it: fdopen() adopts
+       the descriptor only when it succeeds, so a failure leaves the dup to
+       be closed here rather than leaked. */
+    input_fd = dup(instance->fd);
+    output_fd = dup(instance->fd);
+    handle->input = input_fd >= 0 ? fdopen(input_fd, "rb") : NULL;
+    if (handle->input)
+        input_fd = -1;
+    handle->output = output_fd >= 0 ? fdopen(output_fd, "wb") : NULL;
+    if (handle->output)
+        output_fd = -1;
     if (!handle->input || !handle->output) {
+        if (input_fd >= 0)
+            close(input_fd);
+        if (output_fd >= 0)
+            close(output_fd);
         if (handle->input)
             fclose(handle->input);
         if (handle->output)
@@ -3773,6 +3788,70 @@ BOOL SetPrompt(CONST_STRPTR prompt)
 }
 
 /*
+ * One conversion of the AmigaDOS format grammar, read once and used twice:
+ * by the formatter below, and by the argument collector Printf() needs to
+ * pull a C va_list apart the way RawDoFmt says the values were passed.  Two
+ * copies of this parser would be two things to keep in step.
+ *
+ * "wide" is not RawDoFmt's -- it has no 64-bit conversion, because the
+ * machine it was written for had no 64-bit register.  ACE's own commands
+ * spell process and task identifiers %llu, so the length modifier is read
+ * here rather than making those callers lie about the width.
+ */
+struct native_format_spec {
+    int left;
+    int fill;
+    ULONG minimum;
+    ULONG maximum;
+    int wide;
+    char conversion;
+};
+
+static CONST_STRPTR native_scan_format(CONST_STRPTR format,
+                                       struct native_format_spec *spec)
+{
+    spec->left = 0;
+    spec->fill = ' ';
+    spec->minimum = 0;
+    spec->maximum = (ULONG)-1;
+    spec->wide = 0;
+
+    if (*format == '-') {
+        spec->left = 1;
+        format++;
+    }
+    if (*format == '0') {
+        spec->fill = '0';
+        format++;
+    }
+    while (*format >= '0' && *format <= '9')
+        spec->minimum = spec->minimum * 10u + (ULONG)(*format++ - '0');
+    if (*format == '.') {
+        format++;
+        if (*format >= '0' && *format <= '9') {
+            spec->maximum = 0;
+            do {
+                spec->maximum = spec->maximum * 10u + (ULONG)(*format++ - '0');
+            } while (*format >= '0' && *format <= '9');
+        }
+    }
+    /* AmigaDOS writes its 32-bit LONG as %ld, so a single l is the ordinary
+       case and says nothing about width; ll, z and j are the host spellings
+       of a 64-bit value. */
+    if (*format == 'l' && format[1] == 'l') {
+        spec->wide = 1;
+        format += 2;
+    } else if (*format == 'z' || *format == 'j' || *format == 'q') {
+        spec->wide = 1;
+        format++;
+    } else if (*format == 'l' || *format == 'i' || *format == 'h') {
+        format++;
+    }
+    spec->conversion = *format ? *format++ : '\0';
+    return format;
+}
+
+/*
  * VPrintf() receives AmigaDOS's RawDoFmt data stream, not a C va_list.
  * The real Dir command deliberately passes an array of IPTR values to it
  * (including formats such as "%-32.s"), so forwarding the format string to
@@ -3787,15 +3866,16 @@ static LONG native_vprintf(CONST_STRPTR format, const IPTR *data)
     size_t argument = 0;
 
     while (*format) {
-        int left = 0;
-        int fill = ' ';
-        ULONG minimum = 0;
-        ULONG maximum = (ULONG)-1;
+        struct native_format_spec spec;
         char number_buffer[sizeof(IPTR) * 8 + 2];
         const char *text = NULL;
         ULONG length = 0;
         SIPTR signed_value = 0;
         IPTR unsigned_value = 0;
+        int left;
+        int fill;
+        ULONG minimum;
+        ULONG maximum;
         char conversion;
 
         if (*format != '%') {
@@ -3805,30 +3885,12 @@ static LONG native_vprintf(CONST_STRPTR format, const IPTR *data)
             continue;
         }
 
-        format++;
-        if (*format == '-') {
-            left = 1;
-            format++;
-        }
-        if (*format == '0') {
-            fill = '0';
-            format++;
-        }
-        while (*format >= '0' && *format <= '9') {
-            minimum = minimum * 10u + (ULONG)(*format++ - '0');
-        }
-        if (*format == '.') {
-            format++;
-            if (*format >= '0' && *format <= '9') {
-                maximum = 0;
-                do {
-                    maximum = maximum * 10u + (ULONG)(*format++ - '0');
-                } while (*format >= '0' && *format <= '9');
-            }
-        }
-        if (*format == 'l' || *format == 'i')
-            format++;
-        conversion = *format ? *format++ : '\0';
+        format = native_scan_format(format + 1, &spec);
+        left = spec.left;
+        fill = spec.fill;
+        minimum = spec.minimum;
+        maximum = spec.maximum;
+        conversion = spec.conversion;
 
         switch (conversion) {
         case 's':
@@ -3840,31 +3902,34 @@ static LONG native_vprintf(CONST_STRPTR format, const IPTR *data)
 
         case 'd':
         case 'D':
-            signed_value = (SIPTR)data[argument++];
-            if (signed_value < 0) {
-                unsigned_value = (IPTR)(-signed_value);
-                number_buffer[0] = '-';
-                text = number_buffer + 1;
-            } else {
-                unsigned_value = (IPTR)signed_value;
-                text = number_buffer;
-            }
-            length = (ULONG)(number_buffer + sizeof(number_buffer) - text);
-            {
-                char digits[sizeof(number_buffer)];
-                ULONG digit_count = 0;
+        {
+            char digits[sizeof(number_buffer)];
+            ULONG digit_count = 0;
+            int negative;
 
-                do {
-                    digits[digit_count++] =
-                        (char)('0' + (unsigned_value % 10));
-                    unsigned_value /= 10;
-                } while (unsigned_value != 0 &&
-                         digit_count < sizeof(digits));
-                for (ULONG i = 0; i < digit_count; i++)
-                    ((char *)text)[i] = digits[digit_count - i - 1];
-                length = digit_count + (text == number_buffer ? 0u : 1u);
-            }
+            signed_value = (SIPTR)data[argument++];
+            negative = signed_value < 0;
+            /* Through the unsigned type: the most negative value has no
+               positive counterpart to negate. */
+            unsigned_value = negative ? (IPTR)0 - (IPTR)signed_value :
+                                        (IPTR)signed_value;
+            do {
+                digits[digit_count++] =
+                    (char)('0' + (unsigned_value % 10));
+                unsigned_value /= 10;
+            } while (unsigned_value != 0 && digit_count < sizeof(digits));
+
+            /* The sign belongs inside what gets printed.  It used to be
+               written to number_buffer[0] while text was set past it, so
+               "%ld" of -5 printed the 5, skipped the minus, and read one
+               byte beyond the digits it had written. */
+            text = number_buffer;
+            if (negative)
+                number_buffer[length++] = '-';
+            while (digit_count > 0)
+                number_buffer[length++] = digits[--digit_count];
             break;
+        }
 
         case 'u':
         case 'U':
@@ -4179,34 +4244,87 @@ BOOL DeleteVar(CONST_STRPTR name, LONG flags)
     return DOSTRUE;
 }
 
+/*
+ * Printf() takes an AmigaDOS format string, not a C one.  %ld there is the
+ * 32-bit LONG this port still typedefs it as; a C library on this host reads
+ * the same spelling as a 64-bit long.  Handing the format to vsnprintf()
+ * therefore printed every negative LONG as a huge positive number -- "Eval 3
+ * - 10" answered 4294967289 -- and got positives right only by the accident
+ * of the upper half of the register happening to be zero.
+ *
+ * So the arguments are collected the way the Amiga grammar says they were
+ * passed, into the same IPTR stream VPrintf() takes, and printed by the same
+ * formatter.  One grammar, one formatter, both callers.
+ */
+#define NATIVE_PRINTF_MAX_ARGUMENTS 32
+
+static LONG native_printf_arguments(CONST_STRPTR format, va_list arguments,
+                                    IPTR *values, size_t limit)
+{
+    size_t count = 0;
+
+    while (*format) {
+        struct native_format_spec spec;
+
+        if (*format != '%') {
+            format++;
+            continue;
+        }
+        format = native_scan_format(format + 1, &spec);
+        /* Neither consumes a value: %% is a literal, and an unknown
+           conversion is echoed by the formatter without taking one. */
+        if (spec.conversion == '%' || spec.conversion == '\0')
+            continue;
+        if (!strchr("sbdDuUxXpPc", spec.conversion))
+            continue;
+        if (count >= limit)
+            return DOSFALSE;
+
+        switch (spec.conversion) {
+        case 's':
+        case 'b':
+        case 'p':
+        case 'P':
+            values[count++] = (IPTR)(uintptr_t)va_arg(arguments, void *);
+            break;
+        case 'd':
+        case 'D':
+            /* Sign-extended into the slot, which is what makes the same
+               formatter serve both widths. */
+            values[count++] = spec.wide ?
+                (IPTR)(SIPTR)va_arg(arguments, long long) :
+                (IPTR)(SIPTR)va_arg(arguments, int);
+            break;
+        case 'c':
+            values[count++] = (IPTR)(unsigned int)va_arg(arguments, int);
+            break;
+        default:
+            values[count++] = spec.wide ?
+                (IPTR)va_arg(arguments, unsigned long long) :
+                (IPTR)va_arg(arguments, unsigned int);
+            break;
+        }
+    }
+    return DOSTRUE;
+}
+
 LONG Printf(CONST_STRPTR format, ...)
 {
+    IPTR values[NATIVE_PRINTF_MAX_ARGUMENTS];
     va_list arguments;
-    va_list copy;
-    int length;
-    char *output;
-    LONG written;
+    LONG collected;
 
+    if (!format)
+        return DOSFALSE;
     va_start(arguments, format);
-    va_copy(copy, arguments);
-    length = vsnprintf(NULL, 0, format, copy);
-    va_end(copy);
-    if (length < 0) {
-        va_end(arguments);
+    collected = native_printf_arguments(format, arguments, values,
+                                        sizeof(values) / sizeof(values[0]));
+    va_end(arguments);
+    if (collected == DOSFALSE) {
         native_ioerr = ERROR_LINE_TOO_LONG;
         return DOSFALSE;
     }
-    output = malloc((size_t)length + 1);
-    if (!output) {
-        va_end(arguments);
-        native_ioerr = ERROR_NO_FREE_STORE;
-        return DOSFALSE;
-    }
-    (void)vsnprintf(output, (size_t)length + 1, format, arguments);
-    va_end(arguments);
-    written = Write(Output(), output, length);
-    free(output);
-    return written == length ? written : DOSFALSE;
+    return native_vprintf(format, values);
 }
 
 LONG PutStr(CONST_STRPTR string)

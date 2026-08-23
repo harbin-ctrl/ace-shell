@@ -187,7 +187,11 @@ static void test_bootstrap(void)
     assert(FindClass((ClassID)ROOTCLASS) == root);
     assert(FindClass((ClassID)"no-such-class") == NULL);
 
-    /* Repeating the bootstrap must not install a second rootclass. */
+    /* Repeating the bootstrap must not install a second rootclass.  It
+       takes a second reference to this one, which the teardown below gives
+       back: the class list is process-wide, and the console device learned
+       the hard way that whoever closes first must not take it from whoever
+       is still using it. */
     assert(ace_boopsi_init() == 0);
     assert(ace_boopsi_rootclass() == root);
 }
@@ -402,6 +406,15 @@ int main(void)
     test_class_teardown(shape, square);
     test_creation_by_name();
 
+    /* Two bootstraps were taken above, so the first teardown only gives one
+       of them back and the list stays up for its other user. */
+    ace_boopsi_cleanup();
+    assert(ace_boopsi_rootclass() != NULL);
+
+    ace_boopsi_cleanup();
+    assert(ace_boopsi_rootclass() == NULL);
+
+    /* Unbalanced teardown is harmless rather than a second free. */
     ace_boopsi_cleanup();
     assert(ace_boopsi_rootclass() == NULL);
 

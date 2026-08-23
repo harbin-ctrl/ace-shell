@@ -123,12 +123,18 @@ void Remove(struct Node *node)
  * its standard name so FindClass("rootclass") resolves.
  * ---------------------------------------------------------------------- */
 
+/* Users of the process-wide class list, not initialisations: the list
+   outlives any one of them and may only be torn down by the last. */
+static unsigned boopsi_users;
+
 int ace_boopsi_init(void)
 {
     struct IntIntuitionBase *base;
 
-    if (IntuitionBase)
+    if (IntuitionBase) {
+        boopsi_users++;
         return 0;
+    }
     base = calloc(1, sizeof(*base));
     if (!base)
         return -1;
@@ -142,6 +148,7 @@ int ace_boopsi_init(void)
 
     IntuitionBase = base;
     AddClass(&base->RootClass);
+    boopsi_users = 1;
     return 0;
 }
 
@@ -150,7 +157,10 @@ void ace_boopsi_cleanup(void)
     struct IntIntuitionBase *base = IntuitionBase;
     struct IClass *iclass;
 
-    if (!base)
+    if (!base || boopsi_users == 0)
+        return;
+    /* Somebody else is still holding classes and objects on this list. */
+    if (--boopsi_users > 0)
         return;
 
     /*

@@ -81,6 +81,9 @@ struct ace_console_device {
     struct ConsoleBase console_base;
     Class *console_class;
     Class *std_class;
+    /* Whether this device holds a reference on the process-wide BOOPSI
+       class list, so a partly-built device gives back only what it took. */
+    int boopsi_held;
     struct Window amiga_window;
     struct TextFont *font;
     struct RastPort *rp;
@@ -179,6 +182,7 @@ struct ace_console_device *ace_console_device_open(
         fprintf(stderr, "ace_console_device_open: ace_boopsi_init failed\n");
         goto fail;
     }
+    device->boopsi_held = 1;
 
     /*
      * makeStdConClass()'s real body subclasses CONSOLECLASSPTR, a macro for
@@ -248,9 +252,24 @@ void ace_console_device_close(struct ace_console_device *device)
         ace_gfx_destroy_rastport(device->rp);
     if (device->font)
         ace_gfx_unload_font(device->font);
+    /*
+     * The classes are this device's, made by makeConsoleClass() and
+     * makeStdConClass() at open.  They used to be left to the global
+     * teardown below, which meant a device that closed while another was
+     * open freed that one's classes too -- the survivor then dispatched
+     * every method through freed memory.  Subclass first: FreeClass()
+     * refuses a class that still has one, and both refuse while an object
+     * of theirs is alive, which is why the DisposeObject() calls come
+     * first.
+     */
+    if (device->std_class)
+        FreeClass(device->std_class);
+    if (device->console_class)
+        FreeClass(device->console_class);
     free(device->history);
+    if (device->boopsi_held)
+        ace_boopsi_cleanup();
     free(device);
-    ace_boopsi_cleanup();
 }
 
 /*

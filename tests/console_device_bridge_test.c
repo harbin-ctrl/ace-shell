@@ -160,6 +160,27 @@ int main(void)
         assert(strcmp(copied, "AB\n") == 0);
         free(copied);
         ace_console_device_close(controls);
+
+        /* The device opened first is still open, and closing the second one
+           must not have taken the class list, its classes or its objects
+           with it: both devices register classes on one process-wide BOOPSI
+           list, and the teardown used to be unconditional.  Writing here
+           dispatches a method through those classes, which is exactly what
+           read freed memory before -- and crashed under valgrind while
+           passing without it. */
+        ace_console_device_write(device, (const unsigned char *)"live\n", 5);
+        copied = ace_console_device_copy_all(device, &copied_length);
+        assert(copied != NULL);
+        assert(strcmp(copied, "live\n") == 0);
+        free(copied);
+
+        /* Put it back as it was found: RESET TO INITIAL STATE, so the
+           checks further down still start from an empty stream. */
+        ace_console_device_write(device, (const unsigned char *)"\033c", 2);
+        copied = ace_console_device_copy_all(device, &copied_length);
+        assert(copied != NULL);
+        assert(copied_length == 0);
+        free(copied);
     }
 
     /* Socket reads may split the native CSI introducer from its final byte.

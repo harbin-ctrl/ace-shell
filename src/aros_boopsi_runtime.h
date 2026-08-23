@@ -11,13 +11,22 @@
 /*
  * Creates the Intuition base, initialises the class list and installs the
  * rootclass, in the same order as InitRootClass() in rom/intuition.
- * Returns 0 on success.  Calling it more than once is harmless.
+ * Returns 0 on success.
+ *
+ * Calling it more than once does not install a second rootclass; it takes
+ * another reference to the one that is there.  The class list is process-
+ * wide, so every user has to be counted: a console device that closed used
+ * to tear the whole thing down while another still held classes and objects
+ * on it, which left the survivor dispatching methods through freed memory.
+ * Each successful call is one ace_boopsi_cleanup().
  */
 int ace_boopsi_init(void);
 
 /*
- * Releases the class list and the Intuition base.  Classes still registered
- * are freed; objects still alive are not, since only their class knows how.
+ * Drops one reference.  On the last one, releases the class list and the
+ * Intuition base: classes still registered are freed; objects still alive
+ * are not, since only their class knows how.  Unbalanced calls, or calls
+ * before any successful init, do nothing.
  */
 void ace_boopsi_cleanup(void);
 

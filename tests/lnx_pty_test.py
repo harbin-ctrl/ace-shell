@@ -695,7 +695,7 @@ class LiveShell:
         self.temp.cleanup()
 
 
-def run_interactive_break_tests(repo, lnx, probe):
+def run_interactive_break_tests(repo, lnx, probe, foreground_spoof):
     fixture = LiveShell(repo, lnx, probe)
     prompt = b"Linux-PTY> "
     try:
@@ -712,9 +712,25 @@ def run_interactive_break_tests(repo, lnx, probe):
         fixture.wait_for(lambda output: b"SLEEP-C-START" in output,
                          message="Bash sleep command was not started")
         time.sleep(0.5)
-        os.kill(fixture.shell.pid, signal.SIGUSR1)
-        fixture.wait_for(lambda output: output.count(prompt) >= 3,
-                         message="SIGUSR1 did not interrupt Bash's foreground job")
+        spoof = subprocess.Popen(
+            [str(foreground_spoof)], env=fixture.environment,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            ready = spoof.stdout.readline()
+            if ready != b"foreground-spoof-ready\n":
+                fail("foreground decoy did not start",
+                     ready + spoof.stderr.read())
+            os.kill(fixture.shell.pid, signal.SIGUSR1)
+            fixture.wait_for(
+                lambda output: output.count(prompt) >= 3,
+                message=("SIGUSR1 followed stale broker foreground state "
+                         "instead of interrupting Bash"),
+            )
+        finally:
+            if spoof.poll() is None:
+                spoof.terminate()
+            spoof.wait(timeout=2)
 
         fixture.send(b"printf 'SLEEP-'Z'-START\\n'; sleep 30\n")
         fixture.wait_for(lambda output: b"SLEEP-Z-START" in output,
@@ -897,12 +913,13 @@ def main():
     repo = pathlib.Path(__file__).resolve().parent.parent
     lnx = repo / "build" / "Linux"
     probe = repo / "build" / "lnx-pty-probe"
-    if not lnx.exists() or not probe.exists():
+    foreground_spoof = repo / "build" / "foreground-spoof"
+    if not lnx.exists() or not probe.exists() or not foreground_spoof.exists():
         fail("Linux PTY binaries are not built")
     test_isolated_supervisor(lnx, probe)
     run_interactive_shell(repo, lnx, probe)
     run_bare_bash_acceptance(repo, lnx, probe)
-    run_interactive_break_tests(repo, lnx, probe)
+    run_interactive_break_tests(repo, lnx, probe, foreground_spoof)
     run_console_shutdown_test(repo, lnx, probe)
     print("Linux PTY protocol, activation, break translation, job control, and shutdown pass")
 

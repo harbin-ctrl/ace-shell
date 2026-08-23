@@ -76,13 +76,17 @@ static void shell_break_handler(int signal_number)
        PTY, just like the other host-signal bridge events. */
     if (signal_number == SIGUSR2 && kind != ACE_SHELL_FOREGROUND_LNX)
         shell_script_break_handler(signal_number);
-    else if (foreground_child > 0 && break_pipe[1] >= 0)
-        (void)write(break_pipe[1], &event, 1);
     else if (foreground_child > 0 && kind == ACE_SHELL_FOREGROUND_LNX)
+        /* Linux owns a host PTY and consumes these host signals directly.
+           This must precede the broker pipe: routing through the session's
+           foreground record can target stale or independently updated
+           broker state instead of this shell's known wrapper child. */
         (void)kill((pid_t)foreground_child,
                    signal_number == SIGUSR1 ? SIGUSR1 :
                    signal_number == SIGUSR2 ? SIGUSR2 :
                    signal_number == SIGRTMIN ? SIGRTMIN : SIGRTMIN + 1);
+    else if (foreground_child > 0 && break_pipe[1] >= 0)
+        (void)write(break_pipe[1], &event, 1);
     else if (signal_number == SIGUSR1)
         ace_aros_runtime_raise_from_host(SIGBREAKF_CTRL_C);
     else if (signal_number == SIGRTMIN)

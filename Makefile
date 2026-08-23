@@ -406,6 +406,9 @@ $(BUILD)/break-probe: tests/break_probe.c $(BUILD)/dos-runtime.o $(BUILD)/native
 $(BUILD)/lnx-pty-probe: tests/lnx_pty_probe.c | $(BUILD)
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
+$(BUILD)/foreground-spoof: tests/foreground_spoof.c $(BROKER_CLIENT_OBJS)
+	$(CC) $(CFLAGS) -pthread -Isrc $(filter-out %.h,$^) -o $@
+
 $(BUILD)/broker-task-test: tests/broker_task_test.c $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) -pthread -Isrc $(filter-out %.h,$^) -o $@
 
@@ -446,7 +449,7 @@ break-signal-test: $(BUILD)/break-probe $(BUILD)/ace-user-shell
 
 .PHONY: test-lnx-pty
 test-lnx-pty: $(BUILD)/Linux $(BUILD)/lnx-pty-probe $(BUILD)/ace-user-shell \
-	$(BUILD)/ace-broker $(BUILD)/EndCLI
+	$(BUILD)/ace-broker $(BUILD)/EndCLI $(BUILD)/foreground-spoof
 	python3 tests/lnx_pty_test.py
 
 # ET (Edified Tine) is a guest program, so its build is deliberately separate

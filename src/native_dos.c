@@ -167,6 +167,7 @@ static int native_stdio_initialized;
 
 static void set_native_broker_error(void);
 static FILE *selected_output(void);
+static void native_forget_script_input(FILE *file);
 
 static void native_task_signal_from_broker(uint32_t signals, void *context)
 {
@@ -2669,6 +2670,8 @@ BPTR Open(CONST_STRPTR name, LONG mode)
 
 LONG Close(BPTR handle)
 {
+    FILE *file;
+
     native_init_stdio_handles();
     if (handle == (BPTR)&native_stdin_handle.amiga ||
         handle == (BPTR)&native_stdout_handle.amiga ||
@@ -2678,7 +2681,17 @@ LONG Close(BPTR handle)
         native_console_close(handle);
         return DOSTRUE;
     }
-    if (!handle || fclose(as_file(handle)) != 0) {
+    if (!handle) {
+        native_ioerr = errno;
+        return DOSFALSE;
+    }
+    file = as_file(handle);
+    /* Before the close, not after.  fclose() disassociates the stream
+       whether or not it reports an error, so this seam has to stop holding
+       the pointer either way -- and once fclose() has returned, even
+       comparing the old pointer is undefined. */
+    native_forget_script_input(file);
+    if (fclose(file) != 0) {
         native_ioerr = errno;
         return DOSFALSE;
     }
@@ -3469,13 +3482,20 @@ static FILE *native_script_input;
 static FILE *native_last_read_file;
 static int native_last_read_char = EOF;
 
+/* Set once the script stream has been closed in this process, so the
+   descriptor named in the environment is never opened a second time.  It
+   belonged to the stream that has just gone; the number is either closed or
+   has been handed to something else since. */
+static int native_script_input_closed;
+
 static void native_attach_script_input(void)
 {
     const char *descriptor = getenv(ACE_SCRIPT_INPUT_VARIABLE);
     char *end;
     long value;
 
-    if (native_script_input || !descriptor || !*descriptor)
+    if (native_script_input || native_script_input_closed ||
+        !descriptor || !*descriptor)
         return;
     value = strtol(descriptor, &end, 10);
     if (*end || value < 0 || value > INT_MAX)
@@ -3499,6 +3519,33 @@ FILE *native_cli_script_input(void)
 {
     native_attach_script_input();
     return native_script_input;
+}
+
+/*
+ * The shell owns cli_CurrentInput and closes it when a script ends
+ * (workbench/c/Shell/Shell.c, right before it assigns cli_StandardInput in
+ * its place).  For an ACE shell that handle is this process's script input,
+ * and nothing used to tell this seam that the stream underneath it had gone:
+ * the static outlived the FILE, so every later RunCommand() read a freed
+ * stream to find the descriptor to pass to its child, and Quit seeked one.
+ * Called from Close() for exactly the stream being closed, whoever closes
+ * it -- the shell at the end of a script, or a command that was handed the
+ * handle.
+ */
+static void native_forget_script_input(FILE *file)
+{
+    if (!file || file != native_script_input)
+        return;
+    native_script_input_closed = 1;
+    /* UnGetC()'s record of the last stream read is the same pointer. */
+    if (native_last_read_file == file) {
+        native_last_read_file = NULL;
+        native_last_read_char = EOF;
+    }
+    /* Puts cli_CurrentInput back on standard input, which is what the shell
+       does next anyway; a command that closed the script rather than the
+       shell gets the same consistent CLI. */
+    native_cli_set_script_input(NULL);
 }
 
 /* The AmigaDOS Quit command advances cli_CurrentInput beyond the end of the

@@ -1320,6 +1320,24 @@ int native_broker_tally(uint32_t what, char *result, size_t result_size)
                           result_size);
 }
 
+int native_broker_say_warm(const char *voice)
+{
+    char ignored[1];
+
+    if (!voice || !*voice) {
+        errno = EINVAL;
+        return -1;
+    }
+    return broker_request(AMIGA_BROKER_SAY_WARM, voice, NULL, 0, ignored,
+                          sizeof(ignored));
+}
+
+int native_broker_say_status(char *result, size_t result_size)
+{
+    return broker_request(AMIGA_BROKER_SAY_STATUS, NULL, NULL, 0, result,
+                          result_size);
+}
+
 int native_broker_view_root(char *result, size_t result_size)
 {
     return broker_request(AMIGA_BROKER_VIEWROOT, NULL, NULL, 0, result,

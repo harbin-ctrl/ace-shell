@@ -234,7 +234,12 @@ enum amiga_broker_operation {
      * every privileged request already passes through.  The flags say which
      * of the four things is wanted; see AMIGA_BROKER_TALLY_*.
      */
-    AMIGA_BROKER_TALLY = 40
+    AMIGA_BROKER_TALLY = 40,
+
+    /* Shared Piper voices. The broker, rather than a shell or systemd user
+       unit, owns their processes so every ACE shell reuses a warm model. */
+    AMIGA_BROKER_SAY_WARM = 41,
+    AMIGA_BROKER_SAY_STATUS = 42
 };
 
 #define AMIGA_BROKER_ASSIGN_REMOVE       0x0001u

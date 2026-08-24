@@ -150,6 +150,11 @@ int native_broker_privop(uint32_t privop, const char *path, const char *second,
    shell is reporting it.  `what` is one of AMIGA_BROKER_TALLY_*. */
 int native_broker_tally(uint32_t what, char *result, size_t result_size);
 
+/* Start (or retain) one shared Piper voice. Its process belongs to the
+ * broker, not to the short-lived command process that requested it. */
+int native_broker_say_warm(const char *voice);
+int native_broker_say_status(char *result, size_t result_size);
+
 int native_broker_view_root(char *result, size_t result_size);
 
 #endif

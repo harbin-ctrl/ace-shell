@@ -12,6 +12,7 @@
 #include "ace_modes.h"
 
 #include <errno.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <limits.h>
@@ -28,6 +29,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -52,6 +54,7 @@
    its reply arrives, so this counts conversations in flight rather than
    messages ever sent. */
 #define MAX_PORT_MESSAGES 256
+#define MAX_SAY_VOICES 16
 #define DEFAULT_FAIL_LEVEL 10
 #define DEFAULT_PROMPT "%N.%S> "
 #define AMIGA_COMPONENT_LIMIT 107
@@ -218,12 +221,168 @@ struct broker_port_message {
 
 static struct broker_port_message port_messages[MAX_PORT_MESSAGES];
 static uint64_t next_port_message_id = 1;
+
+/* Piper models are broker state. A `say` process is short-lived, while model
+ * loading is expensive; keeping the child here shares one warm voice among
+ * every ACE shell that uses this broker. */
+struct broker_say_voice {
+    char name[MAX_NAME];
+    pid_t pid;
+    time_t last_used;
+};
+
+static struct broker_say_voice say_voices[MAX_SAY_VOICES];
 static struct variable_entry global_vars[MAX_VARS];
 static int server_fd = -1;
 static time_t broker_started;
 /* Set from amiga_broker_socket_path(), or argv[1], as main() starts, before
  * anything (including the signal handlers) can read it. */
 static const char *socket_path;
+
+static unsigned long say_idle_seconds(void)
+{
+    const char *configured = getenv("ACE_SAY_IDLE_SECONDS");
+    char *end;
+    unsigned long seconds;
+
+    if (!configured || !*configured)
+        return 2ul * 60ul * 60ul;
+    errno = 0;
+    seconds = strtoul(configured, &end, 10);
+    if (errno || *end || !seconds)
+        return 2ul * 60ul * 60ul;
+    return seconds;
+}
+
+static void reap_say_voices(void)
+{
+    time_t now = time(NULL);
+    unsigned long idle = say_idle_seconds();
+
+    for (size_t index = 0; index < MAX_SAY_VOICES; index++) {
+        struct broker_say_voice *voice = &say_voices[index];
+        int state;
+
+        if (!voice->pid)
+            continue;
+        if (waitpid(voice->pid, &state, WNOHANG) == voice->pid) {
+            fprintf(stderr, "ace-broker: say voice '%s' stopped\n", voice->name);
+            memset(voice, 0, sizeof(*voice));
+            continue;
+        }
+        if (now >= voice->last_used &&
+            (unsigned long)(now - voice->last_used) >= idle) {
+            fprintf(stderr, "ace-broker: stopping idle say voice '%s'\n",
+                    voice->name);
+            if (kill(-voice->pid, SIGTERM) != 0)
+                (void)kill(voice->pid, SIGTERM);
+            (void)waitpid(voice->pid, &state, 0);
+            memset(voice, 0, sizeof(*voice));
+        }
+    }
+}
+
+static void stop_say_voices(void)
+{
+    for (size_t index = 0; index < MAX_SAY_VOICES; index++)
+        if (say_voices[index].pid)
+            if (kill(-say_voices[index].pid, SIGTERM) != 0)
+                (void)kill(say_voices[index].pid, SIGTERM);
+}
+
+static int say_voice_server(char *result, size_t result_size)
+{
+    const char *configured = getenv("ACE_SAY_VOICE_SERVER");
+    char executable[PATH_MAX];
+    ssize_t length;
+    char *slash;
+
+    if (configured && *configured) {
+        if (strlen(configured) >= result_size) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        strcpy(result, configured);
+        return 0;
+    }
+    length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+    if (length < 0 || (size_t)length >= sizeof(executable) - 1)
+        return -1;
+    executable[length] = '\0';
+    slash = strrchr(executable, '/');
+    if (!slash || snprintf(result, result_size, "%.*s/say-voice-server",
+                           (int)(slash - executable), executable) >=
+                      (int)result_size) {
+        errno = ENOENT;
+        return -1;
+    }
+    return 0;
+}
+
+static bool valid_say_voice(const char *name)
+{
+    if (!name || !*name || strlen(name) >= MAX_NAME)
+        return false;
+    for (; *name; name++)
+        if (!isalnum((unsigned char)*name) && *name != '-' && *name != '_')
+            return false;
+    return true;
+}
+
+static int warm_say_voice(const char *name)
+{
+    struct broker_say_voice *slot = NULL;
+    char server[PATH_MAX];
+    pid_t child;
+
+    if (!valid_say_voice(name)) {
+        errno = EINVAL;
+        return -1;
+    }
+    reap_say_voices();
+    for (size_t index = 0; index < MAX_SAY_VOICES; index++) {
+        if (say_voices[index].pid && strcmp(say_voices[index].name, name) == 0) {
+            say_voices[index].last_used = time(NULL);
+            return 0;
+        }
+        if (!say_voices[index].pid && !slot)
+            slot = &say_voices[index];
+    }
+    if (!slot) {
+        errno = ENOSPC;
+        return -1;
+    }
+    if (say_voice_server(server, sizeof(server)) != 0)
+        return -1;
+    child = fork();
+    if (child < 0)
+        return -1;
+    if (!child) {
+        (void)setsid();
+        execl(server, server, name, (char *)NULL);
+        _exit(127);
+    }
+    strcpy(slot->name, name);
+    slot->pid = child;
+    slot->last_used = time(NULL);
+    return 0;
+}
+
+static int say_poll_timeout(void)
+{
+    time_t now = time(NULL);
+    time_t next = now + (time_t)say_idle_seconds();
+
+    for (size_t index = 0; index < MAX_SAY_VOICES; index++)
+        if (say_voices[index].pid &&
+            say_voices[index].last_used + (time_t)say_idle_seconds() < next)
+            next = say_voices[index].last_used + (time_t)say_idle_seconds();
+    if (next <= now)
+        return 0;
+    if (next - now > INT_MAX / 1000)
+        return INT_MAX;
+    return (int)((next - now) * 1000);
+}
 
 static int write_all(int fd, const void *buffer, size_t length)
 {
@@ -3922,6 +4081,8 @@ static int handle_client(struct broker_connection *connection)
         size_t used = 0;
         size_t live_sessions = 0;
         size_t live_tasks = 0;
+
+        reap_say_voices();
         size_t live_ports = 0;
         size_t live_port_channels = 0;
         size_t live_port_messages = 0;
@@ -3988,6 +4149,21 @@ static int handle_client(struct broker_connection *connection)
             written = snprintf(result + used, sizeof(result) - used,
                                "port\t%s\t%ld\n", ports[i].name,
                                (long)ports[i].pid);
+            if (written < 0 || (size_t)written >= sizeof(result) - used) {
+                status = ENAMETOOLONG;
+                break;
+            }
+            used += (size_t)written;
+        }
+        if (status)
+            break;
+
+        for (size_t i = 0; i < MAX_SAY_VOICES; i++) {
+            if (!say_voices[i].pid)
+                continue;
+            written = snprintf(result + used, sizeof(result) - used,
+                               "say\t%s\t%ld\n", say_voices[i].name,
+                               (long)say_voices[i].pid);
             if (written < 0 || (size_t)written >= sizeof(result) - used) {
                 status = ENAMETOOLONG;
                 break;
@@ -4191,6 +4367,32 @@ static int handle_client(struct broker_connection *connection)
         }
         break;
 
+    case AMIGA_BROKER_SAY_WARM:
+        if (warm_say_voice(path) != 0)
+            status = errno;
+        break;
+
+    case AMIGA_BROKER_SAY_STATUS: {
+        size_t used = 0;
+
+        reap_say_voices();
+        for (size_t index = 0; index < MAX_SAY_VOICES; index++) {
+            struct broker_say_voice *voice = &say_voices[index];
+            int written;
+
+            if (!voice->pid)
+                continue;
+            written = snprintf(result + used, sizeof(result) - used,
+                               "%s\t%ld\n", voice->name, (long)voice->pid);
+            if (written < 0 || (size_t)written >= sizeof(result) - used) {
+                status = ENOSPC;
+                break;
+            }
+            used += (size_t)written;
+        }
+        break;
+    }
+
     case AMIGA_BROKER_SETRESULT: {
         char *end;
         long return_code = strtol(path, &end, 10);
@@ -4261,7 +4463,8 @@ static int handle_client(struct broker_connection *connection)
                request.operation == AMIGA_BROKER_PORT_BROADCAST ||
                request.operation == AMIGA_BROKER_TASK_LIST ||
                request.operation == AMIGA_BROKER_VIEWROOT ||
-               request.operation == AMIGA_BROKER_STATUS) {
+               request.operation == AMIGA_BROKER_STATUS ||
+               request.operation == AMIGA_BROKER_SAY_STATUS) {
         if (send_response(fd, 0, result) != 0)
             outcome = -1;
     } else {
@@ -4433,6 +4636,7 @@ static int acquire_socket_lock(void)
 static void stop_server(int signal_number)
 {
     (void)signal_number;
+    stop_say_voices();
     ace_dos_devices_shutdown();
     if (server_fd >= 0)
         close(server_fd);
@@ -4540,12 +4744,14 @@ int main(int argc, char **argv)
             watched++;
         }
 
-        if (poll(poll_fds, watched, -1) < 0) {
+        if (poll(poll_fds, watched, say_poll_timeout()) < 0) {
             if (errno == EINTR)
                 continue;
             perror("poll");
             return 1;
         }
+
+        reap_say_voices();
 
         /*
          * Connections first, and backwards, so that dropping one can fill

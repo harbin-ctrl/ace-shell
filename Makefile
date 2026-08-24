@@ -391,14 +391,17 @@ AROS_BOOPSI_INCLUDES := -I$(CURDIR)/compat/aros-real/include \
 # drawer of. C: is the loader's last resort, so a command reachable by name
 AMIGA_COMMANDS := Echo CD Path PathPart Which Dir Peek Delete Protect Filenote Fault Ask Get Getenv Set Unset Alias Unalias Beep \
                   FailAt Why Prompt Clip Cut MakeDir MakeLink Join Eval Edit Ed Info Copy List Sort Search Touch EndCLI Assign Relabel Type Rename Stack Run Linux NewCLI \
-                  If Else EndIf EndSkip Lab Quit Skip Execute Setenv Unsetenv Wait Status Break Tally Shutdown Reboot LhA
+                  If Else EndIf EndSkip Lab Quit Skip Execute Setenv Unsetenv Wait Status Break Tally Shutdown Reboot LhA say
 # The host side: a launcher, the console, the shell the console starts, and
 # the broker with its control tool. These are entry points into ACE rather
 # than commands within it, and they are not in SYS:C.
 HOST_BINS := ace-shell ace-user-shell ace-console ace-broker ace-brokerctl acepaste ace-fmm
 INSTALL_BINS := $(AMIGA_COMMANDS) $(HOST_BINS)
 
-all: $(BUILD)/Echo $(BUILD)/CD $(BUILD)/Path $(BUILD)/PathPart $(BUILD)/Which $(BUILD)/Dir $(BUILD)/Peek $(BUILD)/Delete $(BUILD)/Protect $(BUILD)/Filenote $(BUILD)/Fault $(BUILD)/Ask $(BUILD)/Get $(BUILD)/Getenv $(BUILD)/Set $(BUILD)/Unset $(BUILD)/Alias $(BUILD)/Unalias $(BUILD)/Beep $(BUILD)/FailAt $(BUILD)/Why $(BUILD)/Prompt $(BUILD)/Clip $(BUILD)/Cut $(BUILD)/MakeDir $(BUILD)/MakeLink $(BUILD)/Join $(BUILD)/Eval $(BUILD)/Edit $(BUILD)/Ed $(BUILD)/Info $(BUILD)/Copy $(BUILD)/List $(BUILD)/Sort $(BUILD)/Search $(BUILD)/Touch $(BUILD)/EndCLI $(BUILD)/Assign $(BUILD)/Relabel $(BUILD)/Type $(BUILD)/Rename $(BUILD)/Stack $(BUILD)/Run $(BUILD)/Linux $(BUILD)/LhA $(BUILD)/ace-shell $(BUILD)/ace-user-shell $(BUILD)/ace-console $(BUILD)/NewCLI $(BUILD)/If $(BUILD)/Else $(BUILD)/EndIf $(BUILD)/EndSkip $(BUILD)/Lab $(BUILD)/Quit $(BUILD)/Skip $(BUILD)/Execute $(BUILD)/Setenv $(BUILD)/Unsetenv $(BUILD)/Wait $(BUILD)/Status $(BUILD)/Break $(BUILD)/Tally $(BUILD)/Shutdown $(BUILD)/Reboot $(BUILD)/ace-broker $(BUILD)/ace-fmm $(BUILD)/ace-brokerctl $(BUILD)/acepaste $(BUILD)/ace-amiga-posix.o $(BUILD)/exec_compat.o $(BUILD)/exec_compat_bindings.o $(BUILD)/aros-con-handler.o $(BUILD)/aros-con-support.o $(BUILD)/aros-exec-runtime.o $(BUILD)/aros-console-editor.o $(BUILD)/aros-boopsi-runtime.o $(AROS_BOOPSI_OBJS)
+all: $(BUILD)/Echo $(BUILD)/CD $(BUILD)/Path $(BUILD)/PathPart $(BUILD)/Which $(BUILD)/Dir $(BUILD)/Peek $(BUILD)/Delete $(BUILD)/Protect $(BUILD)/Filenote $(BUILD)/Fault $(BUILD)/Ask $(BUILD)/Get $(BUILD)/Getenv $(BUILD)/Set $(BUILD)/Unset $(BUILD)/Alias $(BUILD)/Unalias $(BUILD)/Beep $(BUILD)/FailAt $(BUILD)/Why $(BUILD)/Prompt $(BUILD)/Clip $(BUILD)/Cut $(BUILD)/MakeDir $(BUILD)/MakeLink $(BUILD)/Join $(BUILD)/Eval $(BUILD)/Edit $(BUILD)/Ed $(BUILD)/Info $(BUILD)/Copy $(BUILD)/List $(BUILD)/Sort $(BUILD)/Search $(BUILD)/Touch $(BUILD)/EndCLI $(BUILD)/Assign $(BUILD)/Relabel $(BUILD)/Type $(BUILD)/Rename $(BUILD)/Stack $(BUILD)/Run $(BUILD)/Linux $(BUILD)/LhA $(BUILD)/say $(BUILD)/ace-shell $(BUILD)/ace-user-shell $(BUILD)/ace-console $(BUILD)/NewCLI $(BUILD)/If $(BUILD)/Else $(BUILD)/EndIf $(BUILD)/EndSkip $(BUILD)/Lab $(BUILD)/Quit $(BUILD)/Skip $(BUILD)/Execute $(BUILD)/Setenv $(BUILD)/Unsetenv $(BUILD)/Wait $(BUILD)/Status $(BUILD)/Break $(BUILD)/Tally $(BUILD)/Shutdown $(BUILD)/Reboot $(BUILD)/ace-broker $(BUILD)/ace-fmm $(BUILD)/ace-brokerctl $(BUILD)/acepaste $(BUILD)/ace-amiga-posix.o $(BUILD)/exec_compat.o $(BUILD)/exec_compat_bindings.o $(BUILD)/aros-con-handler.o $(BUILD)/aros-con-support.o $(BUILD)/aros-exec-runtime.o $(BUILD)/aros-console-editor.o $(BUILD)/aros-boopsi-runtime.o $(AROS_BOOPSI_OBJS)
+
+$(BUILD)/say: data/say/say | $(BUILD)
+	$(INSTALL) -m 0755 $< $@
 
 $(BUILD)/break-probe: tests/break_probe.c $(BUILD)/dos-runtime.o $(BUILD)/native_dos.o $(BUILD)/native_command.o $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) -I$(COMPAT) -Isrc $(filter-out %.h,$^) -o $@
@@ -1639,6 +1642,15 @@ install: all tine
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	$(RM) $(DESTDIR)$(BINDIR)/LNX
 	$(INSTALL) -m 0755 $(addprefix $(BUILD)/,$(INSTALL_BINS)) $(DESTDIR)$(BINDIR)
+	# Say is one command, with two private helpers. The broker starts the
+	# voice-server helper itself; there are deliberately no systemd units.
+	$(INSTALL) -m 0755 data/say/say-voice-server data/say/say-setup $(DESTDIR)$(BINDIR)
+	# Piper and its initial voice models are part of the normal per-user ACE
+	# installation. A staged or system-wide install cannot know which user's
+	# home should own the models, so it installs the command set only.
+	@if [ -z "$(DESTDIR)" ] && [ `id -u` -ne 0 ]; then \
+	    "$(BINDIR)/say-setup"; \
+	fi
 	$(INSTALL) -m 0755 "$(TINE_DIR)/tine" $(DESTDIR)$(BINDIR)/tine
 	$(INSTALL) -m 0755 broker-start broker-stop $(DESTDIR)$(BINDIR)
 	# SYS: -- the boot volume, in the shape dos.library's boot assigns expect.
@@ -2049,7 +2061,10 @@ test-tine: all tine
 	python3 tests/tine_console_query_test.py
 	python3 tests/tine_screen_trace_test.py
 
-.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty
+test-say-broker: $(BUILD)/ace-broker $(BUILD)/ace-brokerctl
+	sh tests/say_broker_test.sh
+
+.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty test-say-broker
 AROS_CLIP_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Clip.c
 $(BUILD)/Clip.o: $(AROS_CLIP_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-sign-compare -I$(COMPAT) $(AROS_SHCOMMAND_CFLAGS) -c $< -o $@

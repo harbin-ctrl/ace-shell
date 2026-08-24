@@ -13,7 +13,7 @@ static int usage(const char *program)
                     "getvar NAME | setvar NAME VALUE | setgvar NAME VALUE | "
                     "delvar NAME | result | cli | doslist | assigns | hold | "
                     "status | socket | "
-                    "setresult RC RESULT2\n", program);
+                    "setresult RC RESULT2 | say warm VOICE | say status\n", program);
     return 2;
 }
 
@@ -124,6 +124,23 @@ int main(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "assigns") == 0) {
         if (native_broker_listassigns(result, sizeof(result)) != 0)
             return 1;
+        fputs(result, stdout);
+        return 0;
+    }
+    if (argc == 4 && strcmp(argv[1], "say") == 0 &&
+        strcmp(argv[2], "warm") == 0) {
+        if (native_broker_say_warm(argv[3]) != 0) {
+            perror("say warm");
+            return 1;
+        }
+        return 0;
+    }
+    if (argc == 3 && strcmp(argv[1], "say") == 0 &&
+        strcmp(argv[2], "status") == 0) {
+        if (native_broker_say_status(result, sizeof(result)) != 0) {
+            perror("say status");
+            return 1;
+        }
         fputs(result, stdout);
         return 0;
     }

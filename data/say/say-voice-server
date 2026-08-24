@@ -1,0 +1,12 @@
+#!/bin/bash
+# Invoked only by ace-broker; it execs one Piper HTTP server.
+set -euo pipefail
+CONF="${SAY_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/say/voices.conf}"
+VENV="${SAY_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/say/venv}"
+die() { printf 'say-voice-server: %s\n' "$*" >&2; exit 1; }
+voice="${1:-}"
+[[ -n "$voice" && -f "$CONF" ]] || die "usage: say-voice-server VOICE (run say-setup first)"
+read -r _ port model < <(awk -v v="$voice" '$1==v {print; exit}' "$CONF")
+[[ -n "${port:-}" && -f "${model:-}" ]] || die "voice '$voice' is not configured correctly"
+[[ -x "$VENV/bin/python" ]] || die "no Piper Python environment at $VENV"
+exec "$VENV/bin/python" -m piper.http_server --host 127.0.0.1 --port "$port" -m "$model"

@@ -57,6 +57,26 @@ desktop launcher is written with that directory's absolute path in it, so the
 icon starts the build that was installed rather than whatever PATH happens to
 find first.
 
+### Say
+
+`say` is an ACE command backed by a broker-owned Piper voice server. A normal
+per-user `make install` installs Piper and the initial voice models alongside
+ACE (a staged or system-wide install only installs the command files, because
+it cannot choose a user's home directory):
+
+```sh
+say WARM            # preload the default voice
+say hello there
+say MALE "build finished"
+```
+
+The first `say` for a voice asks `ace-broker` to start it; later commands from
+any shell using that broker reuse the warm model. The broker reaps voices
+after two idle hours and terminates every voice server when it exits. Set
+`ACE_SAY_IDLE_SECONDS` to a positive number to change that timeout (primarily
+useful for testing). `ace-brokerctl say status` shows the broker-owned voices.
+No systemd user units are installed or used.
+
 A system-wide install is an ordinary `PREFIX` override rather than a target of
 its own:
 

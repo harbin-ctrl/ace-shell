@@ -1,0 +1,96 @@
+#!/bin/bash
+# say -- speak through a Piper server owned by ace-broker.
+set -uo pipefail
+
+CONF="${SAY_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/say/voices.conf}"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+BROKERCTL="$(dirname "$SELF")/ace-brokerctl"
+
+die() { printf 'say: %s\n' "$*" >&2; exit 1; }
+usage() {
+    cat <<EOF
+TEXT/M,MALE/S,FEMALE/S,VOICE/K,WARM/S,LIST/S
+EOF
+    exit "${1:-1}"
+}
+[[ -x "$BROKERCTL" ]] || BROKERCTL="$(command -v ace-brokerctl 2>/dev/null || true)"
+[[ -n "$BROKERCTL" ]] || die "ace-brokerctl is not installed beside say"
+field() { awk -v k="$1" '$1==k {print $2; exit}' "$CONF"; }
+
+voice=""; warm=0; list=0; interactive=0
+text_words=()
+while [[ $# -gt 0 ]]; do
+    case "${1^^}" in
+        '?') usage 0 ;;
+        MALE) voice=$(field default-male); shift ;;
+        FEMALE) voice=$(field default-female); shift ;;
+        VOICE)
+            [[ $# -ge 2 ]] || usage
+            voice="$2"
+            shift 2
+            ;;
+        WARM) warm=1; shift ;;
+        LIST) list=1; shift ;;
+        *) text_words+=("$1"); shift ;;
+    esac
+done
+[[ -f "$CONF" ]] || die "no voice configuration at $CONF (ACE installation did not finish say setup)"
+if (( list )); then
+    ((${#text_words[@]} == 0 && !warm)) || usage
+    awk '$1 !~ /^(default-|#)/ && NF {printf "  %-10s port %s\n", $1, $2}' "$CONF"
+    exit 0
+fi
+[[ -n "$voice" ]] || voice=$(field default-female)
+[[ -n "$voice" ]] || die "no default voice set in $CONF"
+port=$(field "$voice")
+[[ -n "$port" ]] || die "unknown voice '$voice' (try: say LIST)"
+if (( warm )); then
+    ((${#text_words[@]} == 0)) || die "WARM preloads the voice and cannot also speak text"
+    text=""
+elif ((${#text_words[@]})); then
+    text="${text_words[*]}"
+elif [[ -t 0 ]]; then
+    text=""; interactive=1
+else
+    text=$(cat)
+fi
+(( warm || interactive )) || [[ -n "${text//[[:space:]]/}" ]] || usage
+
+# This is the ownership boundary: the broker starts and retains the voice.
+# Every shell sharing this broker gets the same already-loaded model.
+"$BROKERCTL" say warm "$voice" || die "could not warm voice '$voice'"
+ready=0
+ensure_ready() {
+    (( ready )) && return 0
+    for _ in $(seq 1 120); do
+        if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/"; then
+            ready=1; return 0
+        fi
+        sleep 0.5
+    done
+    die "voice server for '$voice' did not answer on port $port within 60s"
+}
+(( warm )) && { ensure_ready; exit 0; }
+speak() {
+    local words="$1" json wav rc=0
+    [[ -n "${words//[[:space:]]/}" ]] || return 0
+    ensure_ready
+    json=$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$words") || return 1
+    wav=$(mktemp "${TMPDIR:-/tmp}/say.XXXXXX.wav") || die "could not create a temporary file"
+    if ! curl -sf -X POST -H 'Content-Type: application/json' --data "$json" --max-time 120 "http://127.0.0.1:$port/synthesize" >"$wav" && ! curl -sf -X POST -H 'Content-Type: application/json' --data "$json" --max-time 120 "http://127.0.0.1:$port/" >"$wav"; then
+        rm -f "$wav"; die "voice server on port $port refused the request"
+    fi
+    if [[ -n "${SAY_PLAYER:-}" ]]; then $SAY_PLAYER "$wav" || rc=$?
+    elif command -v pw-play >/dev/null; then pw-play "$wav" || rc=$?
+    elif command -v paplay >/dev/null; then paplay "$wav" || rc=$?
+    elif command -v aplay >/dev/null; then aplay -q "$wav" || rc=$?
+    else rm -f "$wav"; die "no audio player found (need pw-play, paplay or aplay)"; fi
+    rm -f "$wav"; return "$rc"
+}
+if (( interactive )); then
+    printf 'say: type a line and press return. Ctrl-D to finish.\n' >&2
+    while IFS= read -r -p '> ' line; do speak "$line"; done
+    printf '\n' >&2
+else
+    speak "$text"
+fi

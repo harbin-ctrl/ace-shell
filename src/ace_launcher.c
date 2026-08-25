@@ -34,10 +34,24 @@ int main(int argc, char **argv)
     char console_path[PATH_MAX];
     char *slash;
     const char *session = getenv("ACE_SESSION");
+    int desktop = 0;
+    int output = 1;
     pid_t child;
 
+    /* A desktop launcher must remain attached to the real GUI process.  Keep
+       this switch private to ace-shell rather than teaching every ACE mode
+       consumer about it. */
+    for (int index = 1; index < argc; index++) {
+        if (strcmp(argv[index], "--desktop") == 0)
+            desktop = 1;
+        else
+            argv[output++] = argv[index];
+    }
+    argv[output] = NULL;
+    argc = output;
+
     if (ace_mode_parse(&argc, argv, &modes) != 0) {
-        fprintf(stderr, "usage: %s [--root]\n", argv[0]);
+        fprintf(stderr, "usage: %s [--root] [--desktop]\n", argv[0]);
         return RETURN_FAIL;
     }
     if (ace_mode_configure(&modes) != 0) {
@@ -54,7 +68,7 @@ int main(int argc, char **argv)
         return RETURN_FAIL;
     }
     if (argc != 1) {
-        fprintf(stderr, "usage: %s [--root]\n", argv[0]);
+        fprintf(stderr, "usage: %s [--root] [--desktop]\n", argv[0]);
         return RETURN_FAIL;
     }
     if (!session || !*session)
@@ -74,6 +88,16 @@ int main(int argc, char **argv)
         fputs("ace-shell: console unavailable\n", stderr);
         return RETURN_FAIL;
     }
+
+    if (desktop) {
+        /* The panel's GAppInfo launch must track this long-lived process, not
+           a short-lived fork parent which exits before GTK maps the window. */
+        execl(console_path, console_path, "--session", session,
+              (char *)NULL);
+        fputs("ace-shell: console unavailable\n", stderr);
+        return RETURN_FAIL;
+    }
+
     child = fork();
     if (child < 0) {
         fputs("ace-shell: console unavailable\n", stderr);

@@ -61,7 +61,14 @@ channel. ACE keyboard bytes travel through the Amiga-to-Linux input adapter:
 navigation/function keys become the corresponding xterm sequences, Backspace
 and Delete stay distinct, and UTF-8 bytes are forwarded without being parsed
 as ACE C1 controls. Target output travels in the other direction through the
-bounded xterm-to-ACE output adapter. Geometry is requested with the public
+bounded xterm-to-ACE output adapter. Both adapters live in
+`src/terminal_translate.c`, the one place that holds both vocabularies:
+xterm's `ESC [`, 256-colour SGR and UTF-8 on one side, console.device's
+`0x9B`, eight pens and Latin-1 on the other. The screen direction is the
+expanding one -- an erase-character sequence becomes a line of blanks -- so
+it translates only while the console relay has `ACE_TERMINAL_EMIT_MAX` bytes
+free and reports how much of its input it took, and the supervisor holds the
+untranslated tail until the console drains. Geometry is requested with the public
 `CSI 0 q` protocol; the supervisor consumes that reply, applies it with
 `TIOCSWINSZ`, and enables the ACE resize report before starting the target.
 Later size reports repeat the query and `TIOCSWINSZ` operation. The target is

@@ -310,9 +310,21 @@ normal terminal meanings. Ctrl-D at an empty Linux prompt exits that target;
 ordinary ACE script Ctrl-D remains the ACE shell's own script boundary. When
 any Linux target exits, including one that reports a nonzero status, control
 returns to the same ACE shell. Only an explicit ACE `EndCLI` ends that shell.
-ACE's historical console has no xterm SGR renderer, so Linux reduces color
-attributes to ordinary text and maps clears/alternate-screen transitions to
-ACE's native clear behavior. It does not advertise or pass through truecolor.
+
+The two terminals are translated into each other by `src/terminal_translate.c`,
+which is the only part of ACE that knows both vocabularies. xterm introduces
+sequences with `ESC [`, names 256 colors and writes UTF-8; console.device
+introduces sequences with the C1 byte `0x9B`, names one of eight pens and
+reads Latin-1. Colors are mapped onto those pens -- ANSI, 256-color and
+truecolor alike, with the bright colors carried by the console's bold flag --
+and text is folded to Latin-1, with line drawing and the geometric shapes
+`htop` and friends use given ASCII stand-ins. Commands the console lacks are
+rebuilt from ones it has: erase-character becomes blanks and a cursor walk,
+column and row addressing become a margin return and a bare row, and counted
+insert/delete character become repeats of the console's single-cell forms.
+Anything with no faithful equivalent -- scrolling regions, cursor save and
+restore, window manipulation, mouse reporting -- is consumed here, because
+console.device prints the sequences it does not recognize.
 
 The PTY target remains an ordinary Linux process running as the logged-in
 Linux user. It sees the host Linux filesystem and user permissions, not ACE's

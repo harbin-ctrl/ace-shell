@@ -450,6 +450,13 @@ test-easy-request: $(BUILD)/easy-request-test $(BUILD)/ace-broker
 break-signal-test: $(BUILD)/break-probe $(BUILD)/ace-user-shell
 	python3 tests/break_signal_test.py
 
+$(BUILD)/terminal-translate-test: tests/terminal_translate_test.c src/terminal_translate.c src/terminal_translate.h | $(BUILD)
+	$(CC) $(CFLAGS) -Isrc $(filter-out %.h,$^) -o $@
+
+.PHONY: test-terminal-translate
+test-terminal-translate: $(BUILD)/terminal-translate-test
+	$(BUILD)/terminal-translate-test
+
 .PHONY: test-lnx-pty
 test-lnx-pty: $(BUILD)/Linux $(BUILD)/lnx-pty-probe $(BUILD)/ace-user-shell \
 	$(BUILD)/ace-broker $(BUILD)/EndCLI $(BUILD)/foreground-spoof
@@ -773,8 +780,13 @@ $(BUILD)/Info: $(BUILD)/Info.o $(BUILD)/native_command_entry.o \
                $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
-$(BUILD)/Linux.o: $(INSTALL_LINUX_SRC) src/lnx_pty.h | $(BUILD)
-	$(CC) $(CFLAGS) -I$(COMPAT) -c $< -o $@
+$(BUILD)/Linux.o: $(INSTALL_LINUX_SRC) src/lnx_pty.h src/terminal_translate.h | $(BUILD)
+	$(CC) $(CFLAGS) -I$(COMPAT) -Isrc -c $< -o $@
+
+# The xterm/Amiga console vocabulary, kept out of the PTY supervisor so it
+# can be exercised without a terminal.
+$(BUILD)/terminal_translate.o: src/terminal_translate.c src/terminal_translate.h | $(BUILD)
+	$(CC) $(CFLAGS) -Isrc -c $< -o $@
 
 # The one place in ACE that decides an operation needs privilege.  Every
 # command links it, and none of them contains that decision themselves.
@@ -1212,7 +1224,7 @@ $(BUILD)/Beep: $(BUILD)/Beep.o $(BUILD)/beep_entry.o \
 $(BUILD)/EndCLI: $(BUILD)/endcli.o $(DOS_RUNTIME_OBJ) $(BUILD)/native_dos.o $(BUILD)/native_command.o $(BUILD)/native_shcommand.o $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
-$(BUILD)/Linux: $(BUILD)/Linux.o
+$(BUILD)/Linux: $(BUILD)/Linux.o $(BUILD)/terminal_translate.o
 	$(CC) $(CFLAGS) $(filter-out %.h,$^) -o $@
 
 $(BUILD)/ed_tine.o: $(ACE_ED_SRC) | $(BUILD)
@@ -2064,7 +2076,7 @@ test-tine: all tine
 test-say-broker: $(BUILD)/ace-broker $(BUILD)/ace-brokerctl
 	sh tests/say_broker_test.sh
 
-.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty test-say-broker
+.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty test-terminal-translate test-say-broker
 AROS_CLIP_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Clip.c
 $(BUILD)/Clip.o: $(AROS_CLIP_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-sign-compare -I$(COMPAT) $(AROS_SHCOMMAND_CFLAGS) -c $< -o $@

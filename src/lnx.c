@@ -23,10 +23,9 @@
 #include <dos/dos.h>
 
 #include "lnx_pty.h"
+#include "terminal_translate.h"
 
 #define RELAY_BUFFER_SIZE 65536
-#define ACE_INPUT_SEQUENCE_MAX 64
-#define ACE_OUTPUT_EXPANSION_MAX 8
 #define ACE_GEOMETRY_FALLBACK_ROWS 24
 #define ACE_GEOMETRY_FALLBACK_COLS 80
 
@@ -97,25 +96,13 @@ struct relay_buffer {
     size_t length;
 };
 
-struct ace_input_parser {
-    unsigned char sequence[ACE_INPUT_SEQUENCE_MAX];
-    size_t sequence_length;
-    int utf8_continuations;
-    int resize_pending;
-};
-
-struct terminal_output_parser {
-    unsigned char sequence[ACE_INPUT_SEQUENCE_MAX];
-    size_t sequence_length;
-    int kind;
-};
-
-enum terminal_output_sequence_kind {
-    TERMINAL_OUTPUT_NONE = 0,
-    TERMINAL_OUTPUT_ESCAPE,
-    TERMINAL_OUTPUT_CSI,
-    TERMINAL_OUTPUT_OSC,
-    TERMINAL_OUTPUT_OSC_ESCAPE,
+/* Terminal output the ACE console has not taken yet.  One xterm erase or
+ * repeat sequence expands into a whole line of console cells, so translation
+ * stops at a sequence boundary and the untranslated tail waits here. */
+struct pty_hold {
+    unsigned char bytes[4096];
+    size_t length;
+    size_t offset;
 };
 
 static size_t relay_pending(const struct relay_buffer *buffer)
@@ -406,327 +393,30 @@ static void query_console_geometry(struct relay_buffer *typeahead,
     (void)relay_append(typeahead, received, received_length);
 }
 
-static int ace_sequence_final(unsigned char byte)
+/*
+ * The translation module writes through a sink rather than into a relay
+ * buffer directly, so the Amiga and xterm vocabularies stay in one place
+ * and this supervisor keeps to moving bytes between descriptors.
+ */
+static int relay_sink_write(void *context, const void *bytes, size_t length)
 {
-    return byte >= 0x40 && byte <= 0x7e;
+    return relay_append(context, bytes, length);
 }
 
-static int utf8_continuations(unsigned char byte)
+static size_t relay_sink_space(void *context)
 {
-    if (byte >= 0xc2 && byte <= 0xdf)
-        return 1;
-    if (byte >= 0xe0 && byte <= 0xef)
-        return 2;
-    if (byte >= 0xf0 && byte <= 0xf4)
-        return 3;
-    return 0;
+    return relay_space(context);
 }
 
-static int ace_input_emit_sequence(struct ace_input_parser *parser,
-                                   struct relay_buffer *output)
+static struct ace_terminal_sink relay_sink(struct relay_buffer *buffer)
 {
-    static const struct {
-        const char *ace;
-        const char *xterm;
-    } translations[] = {
-        { "\233A", "\033[A" }, { "\233B", "\033[B" },
-        { "\233C", "\033[C" }, { "\233D", "\033[D" },
-        { "\233T", "\033[1;2A" }, { "\233S", "\033[1;2B" },
-        { "\233 A", "\033[1;2D" }, { "\233 @", "\033[1;2C" },
-        { "\233Z", "\033[Z" }, { "\23340~", "\033[2~" },
-        { "\23341~", "\033[5~" }, { "\23342~", "\033[6~" },
-        { "\23344~", "\033OH" }, { "\23345~", "\033OF" },
-        { "\23350~", "\033[2;2~" }, { "\23354~", "\033[1;2H" },
-        { "\23355~", "\033[1;2F" }, { "\2330~", "\033OP" },
-        { "\2331~", "\033OQ" }, { "\2332~", "\033OR" },
-        { "\2333~", "\033OS" }, { "\2334~", "\033[15~" },
-        { "\2335~", "\033[17~" }, { "\2336~", "\033[18~" },
-        { "\2337~", "\033[19~" }, { "\2338~", "\033[20~" },
-        { "\2339~", "\033[21~" }, { "\23310~", "\033[1;2P" },
-        { "\23311~", "\033[1;2Q" }, { "\23312~", "\033[1;2R" },
-        { "\23313~", "\033[1;2S" }, { "\23314~", "\033[15;2~" },
-        { "\23315~", "\033[17;2~" }, { "\23316~", "\033[18;2~" },
-        { "\23317~", "\033[19;2~" }, { "\23318~", "\033[20;2~" },
-        { "\23319~", "\033[21;2~" },
+    struct ace_terminal_sink sink = {
+        relay_sink_write, relay_sink_space, buffer,
     };
-    size_t index;
-    int resize_report = 0;
 
-    if (parser->sequence_length >= 5 && parser->sequence[0] == 0x9b &&
-        memcmp(parser->sequence + 1, "12;", 3) == 0 &&
-        parser->sequence[parser->sequence_length - 1] == '|') {
-        resize_report = parser->sequence[4] >= '0' &&
-                        parser->sequence[4] <= '9';
-        for (index = 4; resize_report &&
-             index + 1 < parser->sequence_length; index++) {
-            unsigned char byte = parser->sequence[index];
-
-            if ((byte < '0' || byte > '9') && byte != ';')
-                resize_report = 0;
-        }
-    }
-    if (resize_report) {
-        parser->resize_pending = 1;
-        parser->sequence_length = 0;
-        return 0;
-    }
-    for (index = 0; index < sizeof(translations) / sizeof(translations[0]);
-         index++) {
-        size_t source_length = strlen(translations[index].ace);
-
-        if (source_length == parser->sequence_length &&
-            memcmp(parser->sequence, translations[index].ace, source_length) == 0) {
-            parser->sequence_length = 0;
-            return relay_append(output, translations[index].xterm,
-                                strlen(translations[index].xterm));
-        }
-    }
-    if (relay_append(output, parser->sequence, parser->sequence_length) != 0)
-        return -1;
-    parser->sequence_length = 0;
-    return 0;
+    return sink;
 }
 
-static int ace_input_feed(struct ace_input_parser *parser,
-                          struct relay_buffer *output,
-                          const unsigned char *bytes, size_t length)
-{
-    size_t index;
-
-    for (index = 0; index < length; index++) {
-        unsigned char byte = bytes[index];
-
-        if (parser->utf8_continuations) {
-            /* U+009B is encoded as C2 9B in UTF-8.  Forwarding the
-             * continuation byte here prevents it from being mistaken for
-             * a standalone ACE CSI introducer. */
-            if (relay_append(output, &byte, 1) != 0)
-                return -1;
-            if (byte >= 0x80 && byte <= 0xbf)
-                parser->utf8_continuations--;
-            else
-                parser->utf8_continuations = utf8_continuations(byte);
-            continue;
-        }
-        if (parser->sequence_length) {
-            parser->sequence[parser->sequence_length++] = byte;
-            if (parser->sequence_length == sizeof(parser->sequence) ||
-                ace_sequence_final(byte)) {
-                if (ace_input_emit_sequence(parser, output) != 0)
-                    return -1;
-            }
-            continue;
-        }
-        if (byte == 0x9b) {
-            parser->sequence[0] = byte;
-            parser->sequence_length = 1;
-            continue;
-        }
-        parser->utf8_continuations = utf8_continuations(byte);
-        if (byte == '\b')
-            byte = 0x7f;
-        else if (byte == 0x7f) {
-            static const unsigned char delete_key[] = "\033[3~";
-
-            if (relay_append(output, delete_key, sizeof(delete_key) - 1) != 0)
-                return -1;
-            continue;
-        }
-        if (relay_append(output, &byte, 1) != 0)
-            return -1;
-    }
-    return 0;
-}
-
-static int ace_input_flush(struct ace_input_parser *parser,
-                           struct relay_buffer *output)
-{
-    if (!parser->sequence_length)
-        return 0;
-    if (relay_append(output, parser->sequence, parser->sequence_length) != 0)
-        return -1;
-    parser->sequence_length = 0;
-    return 0;
-}
-
-static int terminal_output_emit_sequence(struct terminal_output_parser *parser,
-                                         struct relay_buffer *output)
-{
-    static const unsigned char clear_screen[] = "\2331;1H\233J";
-    static const unsigned char home_cursor[] = "\2331;1H";
-    const unsigned char *sequence = parser->sequence;
-    size_t length = parser->sequence_length;
-    int alternate_screen = 0;
-
-    /* The ACE/AROS console recognizes its C1 cursor and erase commands, but
-       its historical parser does not implement xterm's CSI 2 J form.  Home
-       followed by the native erase-display command is the documented ACE
-       full-window clear. */
-    if (length == 4 && memcmp(sequence, "\033[2J", 4) == 0) {
-        parser->sequence_length = 0;
-        return relay_append(output, clear_screen, sizeof(clear_screen) - 1);
-    }
-    /* xterm's parameterless CUP/HVP means absolute home. ACE fills omitted
-       CUP parameters with the current position instead, so make home
-       explicit before handing it to the native parser. */
-    if (length == 3 && sequence[0] == '\033' && sequence[1] == '[' &&
-        (sequence[2] == 'H' || sequence[2] == 'f')) {
-        parser->sequence_length = 0;
-        return relay_append(output, home_cursor, sizeof(home_cursor) - 1);
-    }
-    if (length >= 5 && sequence[0] == '\033' && sequence[1] == '[' &&
-        sequence[2] == '?' &&
-        (sequence[length - 1] == 'h' || sequence[length - 1] == 'l')) {
-        const unsigned char *parameter = sequence + 3;
-        size_t parameter_length = length - 4;
-
-        alternate_screen = (parameter_length == 2 &&
-                            (memcmp(parameter, "47", 2) == 0 ||
-                             memcmp(parameter, "49", 2) == 0)) ||
-                           (parameter_length == 4 &&
-                            memcmp(parameter, "1047", 4) == 0) ||
-                           (parameter_length == 4 &&
-                            memcmp(parameter, "1049", 4) == 0);
-        /* Cursor visibility and private cursor-key mode are state the ACE
-           console cannot render; omitting them is deterministic and leaves
-           no escape text in scrollback. */
-        if (alternate_screen) {
-            parser->sequence_length = 0;
-            return relay_append(output, clear_screen,
-                                sizeof(clear_screen) - 1);
-        }
-        parser->sequence_length = 0;
-        return 0;
-    }
-    /* DECSTBM selects xterm's top and bottom scrolling margins.  The Amiga
-       console has insert/delete-line and whole-window scroll operations but
-       no scrolling-region command: final 'r' is deliberately unassigned in
-       its CSI table.  Letting Vim's ESC [ 1 ; 28 r reach that parser exposes
-       the unsupported tail as "[1;28r" on screen.  There is no faithful
-       native sequence to emit, so consume the xterm-only mode command.  Vim
-       still redraws through the supported cursor, line, and erase commands. */
-    if (length >= 3 && sequence[0] == '\033' && sequence[1] == '[' &&
-        sequence[length - 1] == 'r') {
-        parser->sequence_length = 0;
-        parser->kind = TERMINAL_OUTPUT_NONE;
-        return 0;
-    }
-    /* The imported AROS stdconclass parser has no SGR dispatcher.  Keep the
-       selected TERM truthful about cursor/input behavior, but reduce ANSI
-       8/16/indexed color attributes to the ACE default text pen rather than
-       passing unsupported SGR bytes through as visible garbage. */
-    if (length >= 3 && sequence[0] == '\033' && sequence[1] == '[' &&
-        sequence[length - 1] == 'm') {
-        parser->sequence_length = 0;
-        parser->kind = TERMINAL_OUTPUT_NONE;
-        return 0;
-    }
-    /* xterm selects the character set around ordinary shell prompt text
-       with ESC ( B (and sometimes ESC ) 0).  ACE has no character-set mode;
-       the designation is therefore metadata and must not become visible
-       prompt text. */
-    if (length == 3 && sequence[0] == '\033' &&
-        (sequence[1] == '(' || sequence[1] == ')') &&
-        (sequence[2] == '0' || sequence[2] == 'B')) {
-        parser->sequence_length = 0;
-        parser->kind = TERMINAL_OUTPUT_NONE;
-        return 0;
-    }
-    parser->sequence_length = 0;
-    parser->kind = TERMINAL_OUTPUT_NONE;
-    return relay_append(output, sequence, length);
-}
-
-static int terminal_output_feed(struct terminal_output_parser *parser,
-                                struct relay_buffer *output,
-                                const unsigned char *bytes, size_t length)
-{
-    size_t index;
-
-    for (index = 0; index < length; index++) {
-        unsigned char byte = bytes[index];
-
-        if (parser->kind == TERMINAL_OUTPUT_OSC ||
-            parser->kind == TERMINAL_OUTPUT_OSC_ESCAPE) {
-            /* OSC is normally terminated by BEL; xterm also accepts ST
-               (ESC backslash).  Window-title OSC 0 is presentation metadata,
-               not text for the Amiga console. */
-            if (parser->kind == TERMINAL_OUTPUT_OSC_ESCAPE) {
-                if (byte == '\\' || byte == 0x9c) {
-                    parser->sequence_length = 0;
-                    parser->kind = TERMINAL_OUTPUT_NONE;
-                } else if (byte == '\033') {
-                    parser->kind = TERMINAL_OUTPUT_OSC_ESCAPE;
-                } else {
-                    parser->kind = TERMINAL_OUTPUT_OSC;
-                }
-            } else if (byte == '\007' || byte == 0x9c) {
-                parser->sequence_length = 0;
-                parser->kind = TERMINAL_OUTPUT_NONE;
-            } else if (byte == '\033') {
-                parser->kind = TERMINAL_OUTPUT_OSC_ESCAPE;
-            }
-            continue;
-        }
-
-        if (!parser->sequence_length) {
-            if (byte == '\033') {
-                parser->sequence[0] = byte;
-                parser->sequence_length = 1;
-                parser->kind = TERMINAL_OUTPUT_ESCAPE;
-            } else if (relay_append(output, &byte, 1) != 0) {
-                return -1;
-            }
-            continue;
-        }
-
-        if (parser->kind == TERMINAL_OUTPUT_ESCAPE &&
-            parser->sequence_length == 1) {
-            if (byte == '[') {
-                parser->sequence[parser->sequence_length++] = byte;
-                parser->kind = TERMINAL_OUTPUT_CSI;
-                continue;
-            }
-            if (byte == ']') {
-                parser->sequence_length = 0;
-                parser->kind = TERMINAL_OUTPUT_OSC;
-                continue;
-            }
-        }
-        parser->sequence[parser->sequence_length++] = byte;
-        if (parser->sequence_length == sizeof(parser->sequence) ||
-            (parser->kind == TERMINAL_OUTPUT_ESCAPE &&
-             parser->sequence_length == 2 && byte != '(' && byte != ')') ||
-            (parser->kind == TERMINAL_OUTPUT_ESCAPE &&
-             parser->sequence_length == 3) ||
-            (parser->kind == TERMINAL_OUTPUT_CSI &&
-             parser->sequence_length > 2 && ace_sequence_final(byte))) {
-            if (terminal_output_emit_sequence(parser, output) != 0)
-                return -1;
-        }
-    }
-    return 0;
-}
-
-static int terminal_output_flush(struct terminal_output_parser *parser,
-                                 struct relay_buffer *output)
-{
-    if (!parser->sequence_length)
-        return 0;
-    /* An unterminated OSC is metadata too.  Dropping it avoids exposing a
-       partial title such as "]0;hostname" when the Linux child exits. */
-    if (parser->kind == TERMINAL_OUTPUT_OSC ||
-        parser->kind == TERMINAL_OUTPUT_OSC_ESCAPE) {
-        parser->sequence_length = 0;
-        parser->kind = TERMINAL_OUTPUT_NONE;
-        return 0;
-    }
-    if (relay_append(output, parser->sequence, parser->sequence_length) != 0)
-        return -1;
-    parser->sequence_length = 0;
-    parser->kind = TERMINAL_OUTPUT_NONE;
-    return 0;
-}
 
 static void restore_default_signals(void)
 {
@@ -960,10 +650,12 @@ static void shutdown_pty_target(int *master, pid_t child, pid_t session,
     }
 }
 
-static void relay_read_input(int descriptor, struct ace_input_parser *parser,
+static void relay_read_input(int descriptor,
+                             struct ace_amiga_to_xterm *parser,
                              struct relay_buffer *buffer, int *input_open,
                              int *console_hup)
 {
+    struct ace_terminal_sink sink = relay_sink(buffer);
     unsigned char bytes[4096];
     ssize_t amount;
     size_t space = relay_space(buffer) / 8;
@@ -974,7 +666,7 @@ static void relay_read_input(int descriptor, struct ace_input_parser *parser,
         space = sizeof(bytes);
     amount = console_receive(descriptor, bytes, space);
     if (amount > 0) {
-        if (ace_input_feed(parser, buffer, bytes, (size_t)amount) != 0)
+        if (ace_amiga_to_xterm_feed(parser, &sink, bytes, (size_t)amount) != 0)
             *input_open = 0;
     }
     else if (amount == 0 || (errno != EINTR && errno != EAGAIN &&
@@ -1030,36 +722,32 @@ static void relay_write_master(int master, struct relay_buffer *buffer,
 /* Return nonzero only when the PTY master has reached end-of-stream.  A
  * transient EAGAIN after the child exits is not EOF: unread PTY output can
  * still become available on the next poll. */
-static int relay_read_master(int master, struct terminal_output_parser *parser,
-                             struct relay_buffer *buffer, int *master_read_open)
+static int relay_read_master(int master, struct ace_xterm_to_amiga *parser,
+                             struct pty_hold *hold, struct relay_buffer *buffer,
+                             int *master_read_open)
 {
-    unsigned char bytes[4096];
+    struct ace_terminal_sink sink = relay_sink(buffer);
     ssize_t amount;
-    size_t space = relay_space(buffer);
 
-    /* CSI 2 J becomes the longer native home-and-erase sequence.  Leave
-       enough room even when an escape sequence was split across reads. */
-    if (space < ACE_OUTPUT_EXPANSION_MAX)
-        return 0;
-    space /= 2;
-    if (space > sizeof(bytes))
-        space = sizeof(bytes);
-    amount = read(master, bytes, space);
-    if (amount > 0) {
-        if (terminal_output_feed(parser, buffer, bytes, (size_t)amount) != 0)
+    /* Read only once the previous chunk has been translated in full: an
+       untranslated tail is what keeps the console from being overrun. */
+    if (hold->offset == hold->length) {
+        hold->offset = hold->length = 0;
+        amount = read(master, hold->bytes, sizeof(hold->bytes));
+        if (amount > 0) {
+            hold->length = (size_t)amount;
+        } else if (amount == 0 ||
+                   (amount < 0 && errno != EINTR && errno != EAGAIN &&
+                    errno != EWOULDBLOCK)) {
             *master_read_open = 0;
-        return 0;
+            return 1;
+        } else {
+            return 0;
+        }
     }
-    if (amount == 0 || (amount < 0 && (errno == EIO || errno == EBADF))) {
-        *master_read_open = 0;
-        return 1;
-    }
-    if (amount < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-        return 0;
-    if (amount < 0 && errno != EINTR) {
-        *master_read_open = 0;
-        return 1;
-    }
+    hold->offset += ace_xterm_to_amiga_feed(parser, &sink,
+                                            hold->bytes + hold->offset,
+                                            hold->length - hold->offset);
     return 0;
 }
 
@@ -1084,8 +772,11 @@ static int supervise_pty(const char *program, char **arguments)
     struct relay_buffer input = {0};
     struct relay_buffer output = {0};
     struct relay_buffer typeahead = {0};
-    struct ace_input_parser input_parser = {0};
-    struct terminal_output_parser output_parser = {0};
+    struct ace_amiga_to_xterm input_parser;
+    struct ace_xterm_to_amiga output_parser;
+    struct pty_hold output_hold = {{0}, 0, 0};
+    struct ace_terminal_sink input_sink;
+    struct ace_terminal_sink output_sink;
     struct winsize geometry;
     struct pollfd descriptors[4];
     int descriptor_count;
@@ -1111,6 +802,8 @@ static int supervise_pty(const char *program, char **arguments)
     pid_t session;
     static const unsigned char terminal_eof = LNX_EVENT_CTRL_D;
 
+    ace_amiga_to_xterm_init(&input_parser);
+    ace_xterm_to_amiga_init(&output_parser);
     if (open_pty_pair(&master, &slave) < 0) {
         fprintf(stderr, "Linux: cannot allocate PTY: %s\n", strerror(errno));
         return RETURN_FAIL;
@@ -1142,8 +835,10 @@ static int supervise_pty(const char *program, char **arguments)
         fprintf(stderr, "Linux: cannot set PTY geometry: %s\n", strerror(error));
         return RETURN_FAIL;
     }
-    if (ace_input_feed(&input_parser, &input, typeahead.bytes,
-                       relay_pending(&typeahead)) != 0) {
+    input_sink = relay_sink(&input);
+    output_sink = relay_sink(&output);
+    if (ace_amiga_to_xterm_feed(&input_parser, &input_sink, typeahead.bytes,
+                                relay_pending(&typeahead)) != 0) {
         close(slave);
         close(master);
         close_lnx_signal_pipe();
@@ -1206,7 +901,7 @@ static int supervise_pty(const char *program, char **arguments)
             break;
         }
         if (!input_open && !input_flushed) {
-            if (ace_input_flush(&input_parser, &input) == 0 &&
+            if (ace_amiga_to_xterm_flush(&input_parser, &input_sink) == 0 &&
                 (!master_write_open ||
                  relay_append(&input, &terminal_eof, sizeof(terminal_eof)) == 0))
                 input_flushed = 1;
@@ -1217,9 +912,9 @@ static int supervise_pty(const char *program, char **arguments)
             input_parser.resize_pending = 0;
             query_console_geometry(&resize_typeahead, &geometry);
             (void)ioctl(master, TIOCSWINSZ, &geometry);
-            (void)ace_input_feed(&input_parser, &input,
-                                 resize_typeahead.bytes,
-                                 relay_pending(&resize_typeahead));
+            (void)ace_amiga_to_xterm_feed(&input_parser, &input_sink,
+                                          resize_typeahead.bytes,
+                                          relay_pending(&resize_typeahead));
         }
         if (!output_open) {
             output.offset = output.length = 0;
@@ -1227,11 +922,12 @@ static int supervise_pty(const char *program, char **arguments)
             shutdown_requested = 1;
         }
         if (master_read_open && output_open &&
-            relay_space(&output) > 0)
-            master_at_eof = relay_read_master(master, &output_parser, &output,
+            relay_space(&output) >= ACE_TERMINAL_EMIT_MAX)
+            master_at_eof = relay_read_master(master, &output_parser,
+                                              &output_hold, &output,
                                               &master_read_open);
         if (!master_read_open)
-            (void)terminal_output_flush(&output_parser, &output);
+            (void)ace_xterm_to_amiga_flush(&output_parser, &output_sink);
         if (child_reaped && master_at_eof)
             master_read_open = 0;
         if (child_reaped && !master_read_open && !relay_pending(&output))
@@ -1300,10 +996,11 @@ static int supervise_pty(const char *program, char **arguments)
             if (master_write_open && relay_pending(&input) &&
                 (events & (POLLOUT | POLLERR | POLLHUP)))
                 relay_write_master(master, &input, &master_write_open);
-            if (master_read_open && output_open && relay_space(&output) > 0 &&
+            if (master_read_open && output_open &&
+                relay_space(&output) >= ACE_TERMINAL_EMIT_MAX &&
                 (events & (POLLIN | POLLERR | POLLHUP)))
-                relay_read_master(master, &output_parser, &output,
-                                  &master_read_open);
+                relay_read_master(master, &output_parser, &output_hold,
+                                  &output, &master_read_open);
             if (events & POLLNVAL) {
                 master_read_open = 0;
                 master_write_open = 0;

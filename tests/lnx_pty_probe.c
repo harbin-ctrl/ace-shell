@@ -157,6 +157,8 @@ static int terminal_output(void)
         "\033(Bpi@frambo\033(B:~ $\033(B"
         "\033]0;pi@frambo:~\007"
         "\033]0;another-title\033\\"
+        "stale\033[3X\033[12Gcol\033[9dtop"
+        "caf\303\251 \342\226\275"
         "prompt\n";
 
     for (size_t index = 0; index < sizeof(bytes) - 1; index++) {

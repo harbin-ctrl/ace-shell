@@ -302,10 +302,18 @@ def test_isolated_supervisor(lnx, probe):
     assert_protocol(terminal_output, 1, context="PTY output adaptation")
     terminal_output = protocol_output(terminal_output)
     expected_terminal = (
-        b"plain\x9b1;1H\x9bJ\x9b1;1Hcursorredindexedbackground"
+        b"plain\x9b1;1H\x9bJ\x9b1;1Hcursor"
+        # SGR 30+n names one of the console's eight pens, so ANSI red and
+        # xterm colour 196 both arrive as pen 2 and colour 23 as pen 7.
+        b"\x9b32mred\x9b0m\x9b32mindexed\x9b47mbackground\x9b0m"
         b"\x9b1;1H\x9bJalt\x9b1;1H\x9bJrest"
         b'Bot"filename" 123L, 456B'
-        b"pi@frambo:~ $prompt\r\n"
+        b"pi@frambo:~ $"
+        # Erase-character, column address and row address have no console
+        # command; they become blanks, a margin return and a bare row.
+        b"stale   \x9b3D\r\x9b11Ccol\x9b9Htop"
+        b"caf\xe9 v"
+        b"prompt\r\n"
     )
     if terminal_status != 0 or expected_terminal not in terminal_output:
         fail("PTY output adaptation did not reduce xterm output predictably",
@@ -314,6 +322,9 @@ def test_isolated_supervisor(lnx, probe):
         fail("PTY output adaptation leaked unsupported xterm SGR", terminal_output)
     if b"\033[1;28r" in terminal_output or b"[1;28r" in terminal_output:
         fail("PTY output adaptation leaked xterm scrolling margins",
+             terminal_output)
+    if b"\342\226\275" in terminal_output:
+        fail("PTY output adaptation leaked UTF-8 the console cannot draw",
              terminal_output)
 
     incomplete_status, incomplete_output = run_socket(

@@ -118,9 +118,28 @@ static int amiga_emit_sequence(struct ace_amiga_to_xterm *state,
         { "\23317~", "\033[19;2~" }, { "\23318~", "\033[20;2~" },
         { "\23319~", "\033[21;2~" },
     };
+    /* Only the four plain arrows change shape. A modified arrow keeps the
+       CSI form in both modes, and the function keys are SS3 in both. */
+    static const struct {
+        const char *ace;
+        const char *xterm;
+    } application_arrows[] = {
+        { "\233A", "\033OA" }, { "\233B", "\033OB" },
+        { "\233C", "\033OC" }, { "\233D", "\033OD" },
+    };
     size_t index;
     int resize_report = 0;
 
+    if (state->cursor_keys == ACE_CURSOR_KEYS_APPLICATION) {
+        for (index = 0; index < sizeof(application_arrows) /
+             sizeof(application_arrows[0]); index++) {
+            if (state->sequence_length == 2 &&
+                memcmp(state->sequence, application_arrows[index].ace, 2) == 0) {
+                state->sequence_length = 0;
+                return emit_text(sink, application_arrows[index].xterm);
+            }
+        }
+    }
     if (state->sequence_length >= 5 && state->sequence[0] == AMIGA_CSI &&
         memcmp(state->sequence + 1, "12;", 3) == 0 &&
         state->sequence[state->sequence_length - 1] == '|') {
@@ -203,6 +222,12 @@ int ace_amiga_to_xterm_feed(struct ace_amiga_to_xterm *state,
             return -1;
     }
     return 0;
+}
+
+void ace_amiga_to_xterm_set_cursor_keys(struct ace_amiga_to_xterm *state,
+                                        enum ace_cursor_key_mode mode)
+{
+    state->cursor_keys = mode;
 }
 
 int ace_amiga_to_xterm_flush(struct ace_amiga_to_xterm *state,
@@ -627,13 +652,20 @@ static int translate_sgr(struct ace_xterm_to_amiga *state,
 /* DEC private modes. Only the three the console can actually honour are
  * translated; the rest -- mouse reporting, bracketed paste, cursor blink --
  * are state ACE cannot render and must not print. */
-static int translate_private_mode(const struct ace_terminal_sink *sink,
+static int translate_private_mode(struct ace_xterm_to_amiga *state,
+                                  const struct ace_terminal_sink *sink,
                                   const int *params, size_t count, int set)
 {
     size_t index;
 
     for (index = 0; index < count; index++) {
         switch (params[index]) {
+        case 1:
+            /* Nothing to send: the console has no cursor-key mode. The
+               keyboard direction is what answers this one. */
+            state->cursor_keys = set ? ACE_CURSOR_KEYS_APPLICATION :
+                                       ACE_CURSOR_KEYS_NORMAL;
+            break;
         case 47:
         case 1047:
         case 1049:
@@ -693,7 +725,7 @@ static int translate_csi(struct ace_xterm_to_amiga *state,
         count = parse_params(body + 1, body_length - 1, params,
                              ACE_TERMINAL_PARAM_MAX);
         if (body[0] == '?' && (final == 'h' || final == 'l'))
-            return translate_private_mode(sink, params, count,
+            return translate_private_mode(state, sink, params, count,
                                           final == 'h');
         return 0;
     }
@@ -808,6 +840,7 @@ static int translate_escape(struct ace_xterm_to_amiga *state,
         case 'c':
             state->bold_requested = state->bright_foreground = 0;
             state->bold_emitted = 0;
+            state->cursor_keys = ACE_CURSOR_KEYS_NORMAL;
             return emit_text(sink, "\2330m\2331;1H\233J");
         default:
             /* Keypad and cursor-key modes, save/restore cursor and the
@@ -932,6 +965,12 @@ size_t ace_xterm_to_amiga_feed(struct ace_xterm_to_amiga *state,
             return index;
     }
     return length;
+}
+
+enum ace_cursor_key_mode ace_xterm_to_amiga_cursor_keys(
+    const struct ace_xterm_to_amiga *state)
+{
+    return state->cursor_keys;
 }
 
 int ace_xterm_to_amiga_flush(struct ace_xterm_to_amiga *state,

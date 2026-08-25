@@ -30,6 +30,18 @@
 #define ACE_TERMINAL_EMIT_MAX 1024
 
 /*
+ * DECCKM. xterm-256color names the SS3 form -- ESC O A -- as its arrow key
+ * capability and turns this mode on with the same smkx that a full-screen
+ * program sends when it takes the keyboard, so a program in that state does
+ * not recognise the CSI form. The mode is announced on the screen side and
+ * answered on the keyboard side, which is why both directions live here.
+ */
+enum ace_cursor_key_mode {
+    ACE_CURSOR_KEYS_NORMAL = 0,
+    ACE_CURSOR_KEYS_APPLICATION,
+};
+
+/*
  * Where translated bytes go. The screen direction expands, so it asks how
  * much room is left rather than discovering a full sink halfway through a
  * sequence it can no longer take back.
@@ -46,6 +58,7 @@ struct ace_amiga_to_xterm {
     size_t sequence_length;
     int utf8_continuations;
     int resize_pending;
+    enum ace_cursor_key_mode cursor_keys;
 };
 
 /* Linux program output -> ACE console. */
@@ -63,6 +76,7 @@ struct ace_xterm_to_amiga {
     int bold_requested;
     int bright_foreground;
     int bold_emitted;
+    enum ace_cursor_key_mode cursor_keys;
 };
 
 void ace_amiga_to_xterm_init(struct ace_amiga_to_xterm *state);
@@ -71,6 +85,8 @@ int ace_amiga_to_xterm_feed(struct ace_amiga_to_xterm *state,
                             const unsigned char *bytes, size_t length);
 int ace_amiga_to_xterm_flush(struct ace_amiga_to_xterm *state,
                              const struct ace_terminal_sink *sink);
+void ace_amiga_to_xterm_set_cursor_keys(struct ace_amiga_to_xterm *state,
+                                        enum ace_cursor_key_mode mode);
 
 void ace_xterm_to_amiga_init(struct ace_xterm_to_amiga *state);
 /* Returns how many input bytes were translated. A short result means the
@@ -80,5 +96,8 @@ size_t ace_xterm_to_amiga_feed(struct ace_xterm_to_amiga *state,
                                const unsigned char *bytes, size_t length);
 int ace_xterm_to_amiga_flush(struct ace_xterm_to_amiga *state,
                              const struct ace_terminal_sink *sink);
+/* What the program on the screen side last asked the keyboard to send. */
+enum ace_cursor_key_mode ace_xterm_to_amiga_cursor_keys(
+    const struct ace_xterm_to_amiga *state);
 
 #endif

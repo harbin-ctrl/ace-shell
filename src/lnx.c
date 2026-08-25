@@ -928,6 +928,11 @@ static int supervise_pty(const char *program, char **arguments)
                                               &master_read_open);
         if (!master_read_open)
             (void)ace_xterm_to_amiga_flush(&output_parser, &output_sink);
+        /* The target announces on its output stream which arrow-key form it
+           expects on its input stream, so the two adapters are kept in step
+           here rather than each guessing. */
+        ace_amiga_to_xterm_set_cursor_keys(
+            &input_parser, ace_xterm_to_amiga_cursor_keys(&output_parser));
         if (child_reaped && master_at_eof)
             master_read_open = 0;
         if (child_reaped && !master_read_open && !relay_pending(&output))

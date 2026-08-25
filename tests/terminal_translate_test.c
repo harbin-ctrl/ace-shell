@@ -136,6 +136,50 @@ static void check_backpressure(void)
     }
 }
 
+/* DECCKM is set by the program on the screen side and answered by the
+ * keyboard side, so the two directions have to agree on it. */
+static void check_cursor_key_mode(void)
+{
+    struct ace_xterm_to_amiga screen;
+    struct ace_amiga_to_xterm keyboard;
+    struct test_sink sink;
+    struct ace_terminal_sink target;
+    static const unsigned char application[] = "\033[?1h";
+    static const unsigned char normal[] = "\033[?1l";
+
+    sink_init(&sink, SINK_CAPACITY);
+    target.write = test_sink_write;
+    target.space = test_sink_space;
+    target.context = &sink;
+    ace_xterm_to_amiga_init(&screen);
+    (void)ace_xterm_to_amiga_feed(&screen, &target, application,
+                                  sizeof(application) - 1);
+    if (sink.length != 0) {
+        report("cursor key mode is not console output", &sink, "");
+        return;
+    }
+    if (ace_xterm_to_amiga_cursor_keys(&screen) != ACE_CURSOR_KEYS_APPLICATION) {
+        fprintf(stderr, "cursor key mode: CSI ?1h did not select application\n");
+        failures++;
+        return;
+    }
+    ace_amiga_to_xterm_init(&keyboard);
+    ace_amiga_to_xterm_set_cursor_keys(&keyboard, ACE_CURSOR_KEYS_APPLICATION);
+    (void)ace_amiga_to_xterm_feed(&keyboard, &target,
+                                  (const unsigned char *)"\233A\233D\233T", 6);
+    if (sink.length != 12 || memcmp(sink.bytes, "\033OA\033OD", 6) != 0 ||
+        memcmp(sink.bytes + 6, "\033[1;2A", 6) != 0) {
+        /* A modified arrow keeps the CSI form in both modes. */
+        report("application cursor keys", &sink, "\033OA\033OD\033[1;2A");
+        return;
+    }
+    (void)ace_xterm_to_amiga_feed(&screen, &target, normal, sizeof(normal) - 1);
+    if (ace_xterm_to_amiga_cursor_keys(&screen) != ACE_CURSOR_KEYS_NORMAL) {
+        fprintf(stderr, "cursor key mode: CSI ?1l did not restore normal\n");
+        failures++;
+    }
+}
+
 int main(void)
 {
     /* Colour. SGR 30+n names a pen, not a colour: pen 0 is the window
@@ -214,6 +258,9 @@ int main(void)
                  "incomplete\033[");
 
     check_keyboard("cursor keys", "\233A\233 A", "\033[A\033[1;2D");
+    /* xterm-256color's kcuu1 is the SS3 form, so an ncurses program that
+       turns keypad mode on does not recognise the CSI one. */
+    check_cursor_key_mode();
     check_keyboard("backspace and delete", "\b\177", "\177\033[3~");
 
     check_backpressure();

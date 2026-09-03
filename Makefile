@@ -415,6 +415,12 @@ $(BUILD)/foreground-spoof: tests/foreground_spoof.c $(BROKER_CLIENT_OBJS)
 $(BUILD)/broker-task-test: tests/broker_task_test.c $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) -pthread -Isrc $(filter-out %.h,$^) -o $@
 
+$(BUILD)/broker-shell-lifetime-test: tests/broker_shell_lifetime_test.c $(BROKER_CLIENT_OBJS)
+	$(CC) $(CFLAGS) -pthread -Isrc $(filter-out %.h,$^) -o $@
+
+test-broker-shell-lifetime: $(BUILD)/broker-shell-lifetime-test $(BUILD)/ace-broker
+	sh tests/with_private_broker.sh $(BUILD)/broker-shell-lifetime-test
+
 $(BUILD)/broker-port-channel-test: tests/broker_port_channel_test.c $(BROKER_CLIENT_OBJS)
 	$(CC) $(CFLAGS) -pthread -Isrc $(filter-out %.h,$^) -o $@
 
@@ -2076,7 +2082,7 @@ test-tine: all tine
 test-say-broker: $(BUILD)/ace-broker $(BUILD)/ace-brokerctl
 	sh tests/say_broker_test.sh
 
-.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty test-terminal-translate test-say-broker
+.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-shell-lifetime test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty test-terminal-translate test-say-broker
 AROS_CLIP_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Clip.c
 $(BUILD)/Clip.o: $(AROS_CLIP_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-sign-compare -I$(COMPAT) $(AROS_SHCOMMAND_CFLAGS) -c $< -o $@

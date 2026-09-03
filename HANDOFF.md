@@ -699,8 +699,25 @@ Not a systemd service and not socket-activated: a plain `AF_UNIX` socket the
 broker binds itself. It starts two ways -- explicitly through `broker-start`,
 or implicitly, when any ACE command finds the socket unreachable and forks one
 from the `ace-broker` sitting beside its own executable. Either way it is
-detached, and it runs until something sends it SIGTERM. There is deliberately
-no idle timeout.
+detached. It exits half an hour after the last shell detaches from it -- or
+when it receives SIGTERM.
+
+That window is the whole of the lifetime policy, and it replaces "runs until
+something sends it SIGTERM, deliberately no idle timeout". The wait is there
+because closing one window and opening another a moment later is ordinary, and
+the second window is meant to find the first one's assigns, variables and
+current directory; the end of the wait is there because the alternative was a
+machine accumulating one unreachable broker per protocol change, each still
+holding whatever it had been given, until logout cleared `XDG_RUNTIME_DIR`. A
+connection with no session attached to it yet counts as attached, so a broker
+cannot exit between `accept()` and `ATTACH`. `ACE_BROKER_IDLE_SECONDS`
+overrides the window, and exists so that tests do not have to wait one out.
+
+Mediators inherit that clock rather than keeping one. An `ace-fmm` already
+exits with the last `--root` shell that was the reason for it, and takes its
+CRM, its volume worker and its mount namespace with it; the change is that the
+broker holding its channel is no longer immortal, so a root process can no
+longer be kept alive by a broker nobody is using.
 
 **What it holds.** Per session -- keyed by `ACE_SESSION` -- the current
 directory, command paths, assigns, local variables, RC/Result2, fail level,
@@ -709,7 +726,10 @@ and freed the moment the shell disconnects, so it does not accumulate.
 Broker-wide: the task registry, global (`Setenv`) variables, SYS:, and the DOS
 volume list. This second group is the state a stale broker gets wrong, and
 `Setenv` is now the only part of it that cannot be rebuilt -- the escaped
-filename spellings used to live here too, and are a pure function now.
+filename spellings used to live here too, and are a pure function now. It is
+also the part the idle window can now take away: a global set in a shell that
+closed half an hour ago is gone with the broker that was holding it, where
+before it survived until logout.
 
 **What one broker is.** Its socket is
 `$XDG_RUNTIME_DIR/ace-broker-<sys>-<protocol>.sock`, and both halves of that
@@ -752,14 +772,11 @@ uptime, socket, SYS:, and its live sessions and tasks. `ace-brokerctl socket`
 and `ace-broker --print-socket` print where a connection would go without
 starting anything.
 
-Two consequences of having no idle timeout. Superseded brokers linger as
-processes until logout clears `XDG_RUNTIME_DIR`; they are unreachable rather
-than dangerous, but they do accumulate across a day of protocol edits, and
-`broker-stop` only stops the one matching the current build. And `ace-broker`
-takes any argument as a socket path, so an older one handed `--print-socket`
-binds a socket by that name and serves it forever -- which is why the
-start/stop scripts bound that call with a timeout and reject anything that is
-not an absolute path.
+A protocol change while a shell is still open leaves its old broker running,
+but it goes half an hour after that shell does. And `ace-broker` takes any
+argument as a socket path, so an older one handed `--print-socket` binds a socket by that name and
+serves it forever -- which is why the start/stop scripts bound that call with
+a timeout and reject anything that is not an absolute path.
 
 ## Known boundary
 

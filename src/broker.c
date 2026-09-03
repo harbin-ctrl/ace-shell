@@ -4501,8 +4501,8 @@ drop:
      * Always, forwarded or not. sendmsg() with SCM_RIGHTS *duplicates* a
      * descriptor into the receiver; it does not hand this process's copy
      * over. Leaving them open on the assumption that forwarding consumed them
-     * leaks two descriptors per message with streams, and the broker is the
-     * one process here that never exits -- it would run out.
+     * leaks two descriptors per message with streams, and the broker outlives
+     * every process that talks to it -- it would run out.
      */
     for (size_t index = 0; index < passed_fd_count; index++)
         close(passed_fds[index]);
@@ -4521,6 +4521,57 @@ drop:
 static struct broker_connection connections[MAX_CONNECTIONS];
 static struct pollfd poll_fds[MAX_CONNECTIONS + 1];
 static size_t connection_count;
+
+static void stop_server(int signal_number);
+
+/*
+ * How long a broker nobody is attached to waits before exiting, in seconds.
+ * Overridable so a test need not wait one out; zero means "leave with the
+ * last connection".
+ */
+#define BROKER_IDLE_SECONDS (30ul * 60ul)
+
+static unsigned long broker_idle_seconds(void)
+{
+    const char *configured = getenv("ACE_BROKER_IDLE_SECONDS");
+    char *end;
+    unsigned long seconds;
+
+    if (!configured || !*configured) {
+        return BROKER_IDLE_SECONDS;
+    }
+    errno = 0;
+    seconds = strtoul(configured, &end, 10);
+    if (errno || *end) {
+        return BROKER_IDLE_SECONDS;
+    }
+    return seconds;
+}
+
+/*
+ * When this broker exits if nobody attaches, or zero while somebody is.
+ *
+ * A broker belongs to its shells. It used to run until something sent it
+ * SIGTERM, which left a machine accumulating unreachable brokers, each still
+ * holding whatever it had been given. It waits rather than leaving with the
+ * last shell because closing one window and opening another a moment later is
+ * ordinary, and the second window is meant to find the first one's assigns,
+ * variables and current directory.
+ *
+ * A connection stops the clock, not an attached session: a connection that
+ * has not sent its ATTACH yet is a shell in the act of arriving, and timing
+ * sessions would let a broker exit between accept() and ATTACH.
+ */
+static time_t idle_deadline;
+
+static void refresh_idle_deadline(void)
+{
+    if (connection_count) {
+        idle_deadline = 0;
+        return;
+    }
+    idle_deadline = time(NULL) + (time_t)broker_idle_seconds();
+}
 
 /*
  * Closes a connection and, if it was the last one holding the session it
@@ -4553,6 +4604,7 @@ static void drop_connection(size_t index)
     }
     close(connection->fd);
     connections[index] = connections[--connection_count];
+    refresh_idle_deadline();
 }
 
 static void accept_connection(void)
@@ -4575,6 +4627,31 @@ static void accept_connection(void)
     connections[connection_count].task_id = 0;
     connections[connection_count].port_channel_id = 0;
     connection_count++;
+    refresh_idle_deadline();
+}
+
+/*
+ * How long poll() may sleep: until the next idle voice is due to be reaped,
+ * or until this broker's own idle deadline, whichever comes first.
+ */
+static int broker_poll_timeout(void)
+{
+    int timeout = say_poll_timeout();
+
+    if (idle_deadline) {
+        time_t now = time(NULL);
+        long long remaining = now >= idle_deadline
+                                  ? 0
+                                  : (long long)(idle_deadline - now) * 1000;
+
+        if (remaining > INT_MAX) {
+            remaining = INT_MAX;
+        }
+        if (remaining < timeout) {
+            timeout = (int)remaining;
+        }
+    }
+    return timeout;
 }
 
 static int lock_fd = -1;
@@ -4631,6 +4708,17 @@ static int acquire_socket_lock(void)
             (void)!write(lock_fd, line, (size_t)length);
     }
     return 0;
+}
+
+/*
+ * The idle exit.  Unlike SIGTERM this is not a signal handler, so it can be
+ * polite: the mediator is told to go, and in the right order, rather than
+ * left to read the EOF a dying broker leaves behind.
+ */
+static void stop_idle_server(void)
+{
+    stop_root_services();
+    stop_server(0);
 }
 
 static void stop_server(int signal_number)
@@ -4731,6 +4819,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* The clock starts here, not at the first attach: a broker started by
+       hand, or left behind by a shell that died before it could attach, is
+       exactly as idle as one whose last shell has gone. */
+    refresh_idle_deadline();
+
     for (;;) {
         nfds_t watched = 1;
 
@@ -4744,7 +4837,7 @@ int main(int argc, char **argv)
             watched++;
         }
 
-        if (poll(poll_fds, watched, say_poll_timeout()) < 0) {
+        if (poll(poll_fds, watched, broker_poll_timeout()) < 0) {
             if (errno == EINTR)
                 continue;
             perror("poll");
@@ -4770,5 +4863,11 @@ int main(int argc, char **argv)
 
         if (poll_fds[0].revents & POLLIN)
             accept_connection();
+
+        /* Last, so a connection that arrived on this same wakeup is accepted
+           -- and has stopped the clock -- first. */
+        if (idle_deadline && time(NULL) >= idle_deadline) {
+            stop_idle_server();
+        }
     }
 }

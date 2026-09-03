@@ -612,9 +612,11 @@ the installed `ace-user-shell` binary.
 
 The real shell starts the sibling `ace-broker` only when the configured
 `ACE_BROKER_SOCKET` is unreachable, waits for it to accept connections, and
-reuses an existing broker. The startup lock prevents concurrent shells from
-starting duplicates. Set `ACE_BROKER_BINARY` only when the broker is not
-beside `ace-user-shell`.
+reuses an existing broker. The broker exits half an hour after its last shell
+detaches -- long enough that the next window reuses it, short enough that an
+idle one does not outlast the day -- and the startup lock prevents concurrent
+shells from starting duplicates. Set `ACE_BROKER_BINARY` only when the broker
+is not beside `ace-user-shell`.
 
 Inside that shell, command parsing, prompting, redirection, aliases, and
 command errors are handled by the original AROS Shell code. At its command

@@ -726,6 +726,12 @@ int main(int argc, char **argv)
      * that --root plus one authentication lasts the session, because being
      * asked again and again to use your own computer is what ACE is trying
      * not to feel like.
+     *
+     * What bounds it instead is the session.  This process exits with the
+     * last --root shell that was the reason for it, and the broker that
+     * holds this channel now exits itself once nothing has been attached to
+     * it for half an hour, so an authentication cannot outlive the day's
+     * work by sitting in a broker nobody is using any more.
      */
     timeout_text = getenv("ACE_PRIVILEGE_TIMEOUT");
     if (timeout_text && *timeout_text) {

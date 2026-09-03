@@ -7,27 +7,96 @@ VOICES="$BIN/voices"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/say"
 VENV="$BIN/venv"
 BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main"
-die() { printf 'say-setup: %s\n' "$*" >&2; exit 1; }
+QUALITIES='low medium high'
+DEFAULT_QUALITY=medium
+die()
+{
+    printf 'say-setup: %s\n' "$*" >&2
+    exit 1
+}
+
+usage()
+{
+    cat <<EOF
+usage: say-setup [--quality ${QUALITIES// /|}]
+
+Installs Piper and ACE's initial voices.  The quality defaults to
+$DEFAULT_QUALITY, or to \$SAY_QUALITY when that is set.  A voice not published
+at the asked-for quality falls back to $DEFAULT_QUALITY and says so.
+EOF
+    exit "${1:-0}"
+}
+
+quality=${SAY_QUALITY:-$DEFAULT_QUALITY}
+while (( $# )); do
+    case $1 in
+        --quality=*)
+            quality=${1#--quality=}
+            shift
+            ;;
+        -q|--quality)
+            [[ $# -ge 2 ]] || die 'missing quality'
+            quality=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage 0
+            ;;
+        *)
+            printf 'say-setup: unknown option %s\n' "$1" >&2
+            usage 2
+            ;;
+    esac
+done
+[[ -n $quality ]] || quality=$DEFAULT_QUALITY
+[[ " $QUALITIES " == *" $quality "* ]] || die "quality must be one of: $QUALITIES"
+
 for tool in python3 curl; do command -v "$tool" >/dev/null || die "missing $tool"; done
 python3 -c 'import venv' 2>/dev/null || die 'python3 venv module is missing'
 [[ -x "$VENV/bin/python" ]] || { python3 -m venv "$VENV"; "$VENV/bin/pip" install -q --upgrade pip; }
 "$VENV/bin/python" -c 'import piper, flask' 2>/dev/null || "$VENV/bin/pip" install -q 'piper-tts[http]'
 mkdir -p "$VOICES" "$CONF_DIR"
-for spec in 'amy 5002 en/en_US/amy/medium/en_US-amy-medium' 'ryan 5001 en/en_US/ryan/medium/en_US-ryan-medium'; do
-    read -r name port path <<<"$spec"; base=$(basename "$path")
-    for ext in onnx onnx.json; do
-        target="$VOICES/$base.$ext"
-        if [[ ! -s "$target" ]]; then
-            curl -fL --progress-bar -o "$target.part" "$BASE_URL/$path.$ext"
-            mv "$target.part" "$target"
+
+# Fetch missing files without replacing cached models.
+fetch_voice()
+{
+    local directory=$1 identifier=$2 want=$3
+    local stem=$identifier-$want ext target
+
+    for ext in onnx.json onnx; do
+        target="$VOICES/$stem.$ext"
+        if [[ -s $target ]]; then
+            continue
         fi
+        if ! curl -fL --progress-bar -o "$target.part" \
+             "$BASE_URL/$directory/$want/$stem.$ext"; then
+            rm -f -- "$target.part"
+            return 1
+        fi
+        mv "$target.part" "$target"
     done
+    printf '%s\n' "$stem"
+}
+
+# Amy has no high model; keep both configured when high is requested.
+configured=()
+for spec in 'amy|5002|en/en_US/amy|en_US-amy|low medium' \
+            'ryan|5001|en/en_US/ryan|en_US-ryan|low medium high'; do
+    IFS='|' read -r name port directory identifier available <<<"$spec"
+    selected=$quality
+    if [[ " $available " != *" $quality "* ]]; then
+        selected=$DEFAULT_QUALITY
+        printf 'say-setup: %s has no %s model; using %s\n' \
+            "$identifier" "$quality" "$selected" >&2
+    fi
+    stem=$(fetch_voice "$directory" "$identifier" "$selected") ||
+        die "cannot fetch $identifier at $selected quality"
+    configured+=("$name $port $VOICES/$stem.onnx")
 done
-cat >"$CONF_DIR/voices.conf" <<EOF
-# say voices: <name> <port> <model>
-amy 5002 $VOICES/en_US-amy-medium.onnx
-ryan 5001 $VOICES/en_US-ryan-medium.onnx
-default-female amy
-default-male ryan
-EOF
+
+{
+    printf '# say voices: <name> <port> <model>\n'
+    printf '%s\n' "${configured[@]}"
+    printf 'default-female amy\ndefault-male ryan\n'
+} >"$CONF_DIR/voices.conf"
 printf 'say-setup: ready. Try: say WARM && say hello there\n'

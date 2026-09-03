@@ -2,7 +2,7 @@
 set -eu
 
 # SYS:C is a drawer of symbolic links: `make install` links every command
-# into it from BINDIR. A directory scan reports a softlink as ST_SOFTLINK,
+# into it from PROGDIR. A directory scan reports a softlink as ST_SOFTLINK,
 # which is positive, so Dir counted every command as a drawer and CD walked
 # into one without complaint. Lock() follows the link, so Examine() on a lock
 # must describe the target -- which is what Dir re-Lock()s each softlink to

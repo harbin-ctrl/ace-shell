@@ -44,18 +44,25 @@ Linux absolute symbolic links keep Linux meaning. If a link on `sda2:` names
 mountpoint paths; use `ace-brokerctl name` first when starting from a Linux
 path.
 
-Install the built commands and console runtime into `~/.local/bin`:
+Install the built commands and console runtime:
 
 ```sh
 make install
 ```
 
 That is the whole install, and it needs no privileges. All installed ACE
-programs share one directory, because each finds its companions -- the shell,
-the console, the broker, the AROS commands -- beside its own executable. The
-desktop launcher is written with that directory's absolute path in it, so the
-icon starts the build that was installed rather than whatever PATH happens to
-find first.
+programs share one directory -- `~/.local/lib/ace` -- because each finds its
+companions -- the shell, the console, the broker, the AROS commands -- beside
+its own executable. The desktop launcher is written with that directory's
+absolute path in it, so the icon starts the build that was installed rather
+than whatever PATH happens to find first.
+
+`~/.local/bin` gets symlinks for the five entry points a person types at a
+Linux prompt -- `ace-shell`, `ace-brokerctl`, `acepaste`, `broker-start` and
+`broker-stop` -- and nothing else. `Copy`, `List`, `Type`, `Set`, `Run` and
+`say` are commands inside ACE, reached by name through `C:`; on `PATH` they
+only collided with host tools. An install over an older one removes the copies
+that older one left in `~/.local/bin`, naming each as it goes.
 
 ### Say
 

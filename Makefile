@@ -60,16 +60,25 @@ WAYLAND_LIBS := $(shell pkg-config --libs wayland-client)
 # passed explicitly because sudo resets HOME -- but it is deliberately not a
 # target of its own. Nothing should reach it by accident.
 PREFIX ?= $(HOME)/.local
+# Two directories, and the difference between them is what a Linux user's PATH
+# is allowed to see. PROGDIR holds every ACE program -- the shell, the console,
+# the broker, the fmm, and all sixty AmigaDOS commands -- because each finds
+# its companions beside its own executable, so they are one set that stays
+# together. BINDIR gets symlinks for the handful of entry points a person
+# types at a Linux prompt. Copy, List, Type, Set, Run and say are commands
+# inside ACE; on PATH they were shadowing host tools and being shadowed by
+# them, which is a name collision nobody asked for.
 BINDIR ?= $(PREFIX)/bin
+PROGDIR ?= $(PREFIX)/lib/ace
 DATADIR ?= $(PREFIX)/share
 APPLICATIONSDIR ?= $(DATADIR)/applications
 ICONDIR ?= $(DATADIR)/icons/hicolor/512x512/apps
 POLKIT_ACTIONDIR ?= $(DATADIR)/polkit-1/actions
 # What SYS: means on this host: the boot volume's root, laid out the Amiga way
 # so C: really is SYS:C and S: really is SYS:S. The binaries themselves stay in
-# BINDIR, where a Linux user's PATH can reach them and where every "look for
-# the console beside me" lookup already resolves; SYS:C holds symlinks to them,
-# so both views are true at once and neither is a copy of the other.
+# PROGDIR, where every "look for the console beside me" lookup resolves; SYS:C
+# holds symlinks to them, so both views are true at once and neither is a copy
+# of the other.
 SYSDIR ?= $(DATADIR)/ace
 INSTALL ?= install
 CURL ?= curl
@@ -397,6 +406,29 @@ AMIGA_COMMANDS := Echo CD Path PathPart Which Dir Peek Delete Protect Filenote F
 # than commands within it, and they are not in SYS:C.
 HOST_BINS := ace-shell ace-user-shell ace-console ace-broker ace-brokerctl acepaste ace-fmm
 INSTALL_BINS := $(AMIGA_COMMANDS) $(HOST_BINS)
+# What a person types at a Linux prompt: the launcher, the broker's control
+# tool and its scripts, and the clipboard bridge. Everything else is reached
+# from inside ACE, by name through C: or by a program looking beside itself.
+PATH_BINS := ace-shell ace-brokerctl acepaste broker-start broker-stop
+# What an older ACE put on PATH and this one does not. LNX is the name Linux
+# used to have; runtime is Vim's, which install-vim used to unpack into BINDIR.
+STALE_PATH_BINS := $(AMIGA_COMMANDS) LNX $(filter-out $(PATH_BINS),$(HOST_BINS)) \
+                   say-voice-server say-setup tine vim runtime rexx rexxmast
+
+# Removes names an older install left in BINDIR. Only names ACE installs, and
+# never when the two directories are the same one -- which they are for a
+# prefix that predates the split.
+define prune_from_path
+	@if [ "$(BINDIR)" != "$(PROGDIR)" ]; then \
+	    for stale in $(1); do \
+	        target=$(DESTDIR)$(BINDIR)/$$stale; \
+	        if [ -e "$$target" ] || [ -L "$$target" ]; then \
+	            echo "removing $$target, which an older install put on PATH"; \
+	            $(RM) -r "$$target"; \
+	        fi; \
+	    done; \
+	fi
+endef
 
 all: $(BUILD)/Echo $(BUILD)/CD $(BUILD)/Path $(BUILD)/PathPart $(BUILD)/Which $(BUILD)/Dir $(BUILD)/Peek $(BUILD)/Delete $(BUILD)/Protect $(BUILD)/Filenote $(BUILD)/Fault $(BUILD)/Ask $(BUILD)/Get $(BUILD)/Getenv $(BUILD)/Set $(BUILD)/Unset $(BUILD)/Alias $(BUILD)/Unalias $(BUILD)/Beep $(BUILD)/FailAt $(BUILD)/Why $(BUILD)/Prompt $(BUILD)/Clip $(BUILD)/Cut $(BUILD)/MakeDir $(BUILD)/MakeLink $(BUILD)/Join $(BUILD)/Eval $(BUILD)/Edit $(BUILD)/Ed $(BUILD)/Info $(BUILD)/Copy $(BUILD)/List $(BUILD)/Sort $(BUILD)/Search $(BUILD)/Touch $(BUILD)/EndCLI $(BUILD)/Assign $(BUILD)/Relabel $(BUILD)/Type $(BUILD)/Rename $(BUILD)/Stack $(BUILD)/Run $(BUILD)/Linux $(BUILD)/LhA $(BUILD)/say $(BUILD)/ace-shell $(BUILD)/ace-user-shell $(BUILD)/ace-console $(BUILD)/NewCLI $(BUILD)/If $(BUILD)/Else $(BUILD)/EndIf $(BUILD)/EndSkip $(BUILD)/Lab $(BUILD)/Quit $(BUILD)/Skip $(BUILD)/Execute $(BUILD)/Setenv $(BUILD)/Unsetenv $(BUILD)/Wait $(BUILD)/Status $(BUILD)/Break $(BUILD)/Tally $(BUILD)/Shutdown $(BUILD)/Reboot $(BUILD)/ace-broker $(BUILD)/ace-fmm $(BUILD)/ace-brokerctl $(BUILD)/acepaste $(BUILD)/ace-amiga-posix.o $(BUILD)/exec_compat.o $(BUILD)/exec_compat_bindings.o $(BUILD)/aros-con-handler.o $(BUILD)/aros-con-support.o $(BUILD)/aros-exec-runtime.o $(BUILD)/aros-console-editor.o $(BUILD)/aros-boopsi-runtime.o $(AROS_BOOPSI_OBJS)
 
@@ -1652,25 +1684,32 @@ clean-lha:
 # comes first -- which is how an install can look complete and still start
 # yesterday's build.
 # Written by the install recipe rather than as a file target of its own,
-# because its content depends on BINDIR -- a variable, not a file. As a target
+# because its content depends on PROGDIR -- a variable, not a file. As a target
 # make would consider it up to date whenever data/ace.desktop.in had not
 # changed, and happily install a launcher pointing at the prefix from the
 # previous install.
 install: all tine
-	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(RM) $(DESTDIR)$(BINDIR)/LNX
-	$(INSTALL) -m 0755 $(addprefix $(BUILD)/,$(INSTALL_BINS)) $(DESTDIR)$(BINDIR)
+	$(INSTALL) -d $(DESTDIR)$(PROGDIR)
+	$(RM) $(DESTDIR)$(PROGDIR)/LNX
+	$(INSTALL) -m 0755 $(addprefix $(BUILD)/,$(INSTALL_BINS)) $(DESTDIR)$(PROGDIR)
 	# Say is one command, with two private helpers. The broker starts the
 	# voice-server helper itself; there are deliberately no systemd units.
-	$(INSTALL) -m 0755 data/say/say-voice-server data/say/say-setup $(DESTDIR)$(BINDIR)
+	$(INSTALL) -m 0755 data/say/say-voice-server data/say/say-setup $(DESTDIR)$(PROGDIR)
 	# Piper and its initial voice models are part of the normal per-user ACE
 	# installation. A staged or system-wide install cannot know which user's
 	# home should own the models, so it installs the command set only.
 	@if [ -z "$(DESTDIR)" ] && [ `id -u` -ne 0 ]; then \
-	    "$(BINDIR)/say-setup"; \
+	    "$(PROGDIR)/say-setup"; \
 	fi
-	$(INSTALL) -m 0755 "$(TINE_DIR)/tine" $(DESTDIR)$(BINDIR)/tine
-	$(INSTALL) -m 0755 broker-start broker-stop $(DESTDIR)$(BINDIR)
+	$(INSTALL) -m 0755 "$(TINE_DIR)/tine" $(DESTDIR)$(PROGDIR)/tine
+	$(INSTALL) -m 0755 broker-start broker-stop $(DESTDIR)$(PROGDIR)
+	# PATH gets the entry points, as symlinks into the set they belong to.
+	# The scripts resolve their own link before looking beside themselves.
+	$(INSTALL) -d $(DESTDIR)$(BINDIR)
+	for entry in $(PATH_BINS); do \
+	    ln -sf $(PROGDIR)/$$entry $(DESTDIR)$(BINDIR)/$$entry; \
+	done
+	$(call prune_from_path,$(STALE_PATH_BINS))
 	# SYS: -- the boot volume, in the shape dos.library's boot assigns expect.
 	# Only the drawers ACE actually fills are created: AddBootAssign() in
 	# rom/dos/cliinit.c falls back to SYS: itself for a drawer that is not
@@ -1680,16 +1719,16 @@ install: all tine
 	              $(DESTDIR)$(SYSDIR)/Prefs/Env-Archive
 	$(RM) $(DESTDIR)$(SYSDIR)/C/LNX
 	for command in $(AMIGA_COMMANDS); do \
-	    ln -sf $(BINDIR)/$$command $(DESTDIR)$(SYSDIR)/C/$$command; \
+	    ln -sf $(PROGDIR)/$$command $(DESTDIR)$(SYSDIR)/C/$$command; \
 	done
 	$(INSTALL) -m 0644 data/Startup-Sequence $(DESTDIR)$(SYSDIR)/S/Startup-Sequence
 	$(INSTALL) -m 0644 data/Shell-Startup $(DESTDIR)$(SYSDIR)/S/Shell-Startup
 	$(INSTALL) -d $(DESTDIR)$(APPLICATIONSDIR) $(DESTDIR)$(ICONDIR) \
 	              $(DESTDIR)$(POLKIT_ACTIONDIR)
-	sed 's|@BINDIR@|$(BINDIR)|g' data/ace.desktop.in > $(BUILD)/ace.desktop
+	sed 's|@PROGDIR@|$(PROGDIR)|g' data/ace.desktop.in > $(BUILD)/ace.desktop
 	$(INSTALL) -m 0644 $(BUILD)/ace.desktop $(DESTDIR)$(APPLICATIONSDIR)/ace.desktop
 	$(INSTALL) -m 0644 assets/ace.png $(DESTDIR)$(ICONDIR)/ace.png
-	sed 's|@BINDIR@|$(BINDIR)|g' data/org.ace.Ace.fmm.policy > \
+	sed 's|@PROGDIR@|$(PROGDIR)|g' data/org.ace.Ace.fmm.policy > \
 	              $(BUILD)/org.ace.Ace.fmm.policy
 	$(INSTALL) -m 0644 $(BUILD)/org.ace.Ace.fmm.policy \
 	              $(DESTDIR)$(POLKIT_ACTIONDIR)/org.ace.Ace.fmm.policy
@@ -1728,7 +1767,7 @@ install: all tine
 #
 # Each install target depends on its build target, so "make install-regina" on
 # its own builds first when the binary is missing or out of date, exactly as
-# "make install" builds "all". Each installs into $(BINDIR) beside
+# "make install" builds "all". Each installs into $(PROGDIR) beside
 # ace-user-shell -- which is not a tidiness preference but a requirement, since
 # every ACE program finds its companions beside its own executable -- and then
 # symlinks the command into SYS:C so typing its name resolves through C:.
@@ -1742,51 +1781,54 @@ install: all tine
 install-vim: vim
 	@test -f "$(BUILD)/runtime/defaults.vim" || \
 		(echo "install-vim: $(BUILD)/runtime is missing Vim's runtime files" >&2; exit 2)
-	$(INSTALL) -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(BINDIR)/runtime
-	$(INSTALL) -m 0755 $(BUILD)/vim $(DESTDIR)$(BINDIR)/vim
-	cp -a $(BUILD)/runtime/. $(DESTDIR)$(BINDIR)/runtime/
+	$(INSTALL) -d $(DESTDIR)$(PROGDIR) $(DESTDIR)$(PROGDIR)/runtime
+	$(INSTALL) -m 0755 $(BUILD)/vim $(DESTDIR)$(PROGDIR)/vim
+	cp -a $(BUILD)/runtime/. $(DESTDIR)$(PROGDIR)/runtime/
 	# In SYS:C like any other command, so typing "vim" finds it through C:.
 	$(INSTALL) -d $(DESTDIR)$(SYSDIR)/C
-	ln -sf $(BINDIR)/vim $(DESTDIR)$(SYSDIR)/C/vim
+	ln -sf $(PROGDIR)/vim $(DESTDIR)$(SYSDIR)/C/vim
+	$(call prune_from_path,vim runtime)
 
-# rexx must land in $(BINDIR) rather than only in SYS:C, and the symlink must
+# rexx must land in $(PROGDIR) rather than only in SYS:C, and the symlink must
 # point there rather than being a copy: ADDRESS COMMAND goes through
 # SystemTags() -> launch_command(), which looks for ace-user-shell beside the
 # running executable. A rexx that resolved to somewhere else would run, and
 # report success, while silently doing nothing.
 install-regina: regina rexxmast $(BUILD)/ace-user-shell \
                 $(BUILD)/ace-broker $(BUILD)/ace-brokerctl
-	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 0755 $(BUILD)/rexx $(DESTDIR)$(BINDIR)/rexx
-	$(INSTALL) -m 0755 $(BUILD)/rexxmast $(DESTDIR)$(BINDIR)/rexxmast
+	$(INSTALL) -d $(DESTDIR)$(PROGDIR)
+	$(INSTALL) -m 0755 $(BUILD)/rexx $(DESTDIR)$(PROGDIR)/rexx
+	$(INSTALL) -m 0755 $(BUILD)/rexxmast $(DESTDIR)$(PROGDIR)/rexxmast
 	# Regina's ADDRESS COMMAND and ARexx support routines launch this shell
 	# beside rexx, so the standalone Regina install needs the matching build.
-	$(INSTALL) -m 0755 $(BUILD)/ace-user-shell $(DESTDIR)$(BINDIR)/ace-user-shell
+	$(INSTALL) -m 0755 $(BUILD)/ace-user-shell $(DESTDIR)$(PROGDIR)/ace-user-shell
 	# RexxMast discovers the broker beside its own executable. Install the
 	# matching protocol build here so install-regina works independently of a
 	# previously installed ACE base set.
-	$(INSTALL) -m 0755 $(BUILD)/ace-broker $(DESTDIR)$(BINDIR)/ace-broker
-	$(INSTALL) -m 0755 $(BUILD)/ace-brokerctl $(DESTDIR)$(BINDIR)/ace-brokerctl
+	$(INSTALL) -m 0755 $(BUILD)/ace-broker $(DESTDIR)$(PROGDIR)/ace-broker
+	$(INSTALL) -m 0755 $(BUILD)/ace-brokerctl $(DESTDIR)$(PROGDIR)/ace-brokerctl
 	$(INSTALL) -d $(DESTDIR)$(SYSDIR)/C
-	ln -sf $(BINDIR)/rexx $(DESTDIR)$(SYSDIR)/C/rexx
-	ln -sf $(BINDIR)/rexxmast $(DESTDIR)$(SYSDIR)/C/rexxmast
+	ln -sf $(PROGDIR)/rexx $(DESTDIR)$(SYSDIR)/C/rexx
+	ln -sf $(PROGDIR)/rexxmast $(DESTDIR)$(SYSDIR)/C/rexxmast
 	# RX is what an Amiga user types, so it is here from the start. It is
 	# an alias for the interpreter. RexxMast is now available as a separate
 	# user-started service; RX still invokes the local interpreter here, while
 	# ADDRESS REXX explicitly exercises the public RexxMast port.
-	ln -sf $(BINDIR)/rexx $(DESTDIR)$(SYSDIR)/C/RX
-	@if [ -z "$(DESTDIR)" ] && [ ! -x "$(BINDIR)/ace-user-shell" ]; then \
+	ln -sf $(PROGDIR)/rexx $(DESTDIR)$(SYSDIR)/C/RX
+	$(call prune_from_path,rexx rexxmast)
+	@if [ -z "$(DESTDIR)" ] && [ ! -x "$(PROGDIR)/ace-user-shell" ]; then \
 	    echo; \
-	    echo "warning: installed $(BINDIR)/rexx, but ace-user-shell is not"; \
+	    echo "warning: installed $(PROGDIR)/rexx, but ace-user-shell is not"; \
 	    echo "         beside it. ADDRESS COMMAND will do nothing and still"; \
 	    echo "         report success. Run \"make install\" too."; \
 	fi
 
 install-lha: lha
-	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 0755 $(BUILD)/LhA $(DESTDIR)$(BINDIR)/LhA
+	$(INSTALL) -d $(DESTDIR)$(PROGDIR)
+	$(INSTALL) -m 0755 $(BUILD)/LhA $(DESTDIR)$(PROGDIR)/LhA
 	$(INSTALL) -d $(DESTDIR)$(SYSDIR)/C
-	ln -sf $(BINDIR)/LhA $(DESTDIR)$(SYSDIR)/C/LhA
+	ln -sf $(PROGDIR)/LhA $(DESTDIR)$(SYSDIR)/C/LhA
+	$(call prune_from_path,LhA)
 
 test-console-device: $(BUILD)/console-device-test
 	$(BUILD)/console-device-test

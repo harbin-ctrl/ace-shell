@@ -6,7 +6,13 @@ if (( ! sourced )); then
     set +e
 fi
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+# Through the link, not to it: PATH holds a symlink into the install, and the
+# broker this script starts and stops is the one beside the real file.
+script_file=${BASH_SOURCE[0]}
+if [[ -L $script_file ]]; then
+    script_file=$(readlink -f -- "$script_file")
+fi
+script_dir=$(CDPATH= cd -- "$(dirname -- "$script_file")" 2>/dev/null && pwd)
 if [[ -x $script_dir/build/ace-broker ]]; then
     ace_runtime_dir=$script_dir/build
 else

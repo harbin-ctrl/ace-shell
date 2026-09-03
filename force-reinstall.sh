@@ -95,6 +95,9 @@ for prefix in "${prefixes[@]}"; do
     seen_prefixes[$prefix]=yes
     bindir=$prefix/bin
     has_ace_install=0
+    # lib/ace is where the programs live now; the bin names are what older
+    # installs left on PATH, and either one proves the prefix is ACE's.
+    [[ -d $prefix/lib/ace ]] && has_ace_install=1
     for core_name in ace-shell ace-user-shell ace-console ace-broker; do
         if [[ -e $bindir/$core_name || -L $bindir/$core_name ]]; then
             has_ace_install=1
@@ -105,6 +108,7 @@ for prefix in "${prefixes[@]}"; do
         for name in "${ace_names[@]}"; do
             remove_file "$bindir/$name"
         done
+        remove_tree "$prefix/lib/ace"
         remove_tree "$prefix/share/ace"
         remove_file "$prefix/share/applications/ace.desktop"
         remove_file "$prefix/share/icons/hicolor/512x512/apps/ace.png"
@@ -128,7 +132,7 @@ fi
 make -j2 all
 make install
 
-installed_shell=$HOME/.local/bin/ace-shell
+installed_shell=$HOME/.local/lib/ace/ace-shell
 if [[ ! -x $installed_shell ]]; then
     printf 'installed ace-shell is missing: %s\n' "$installed_shell" >&2
     exit 1

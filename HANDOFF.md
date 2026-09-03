@@ -7,18 +7,31 @@ Two hosts are set up, both building and passing the full test suite:
 * a Raspberry Pi (aarch64, Debian, labwc) at `~/repo/ace`, run from `build/`;
 * `blackberry` (x86_64, Debian 13) at `~/repo/ace`.
 
-`make install` installs into `~/.local/bin` and needs no privileges. A
+`make install` installs into `~/.local/lib/ace` and needs no privileges. A
 system-wide install is a `PREFIX` override --
 `sudo make PREFIX=/usr/local POLKIT_ACTIONDIR=/usr/share/polkit-1/actions AROS_ROOT="$HOME/aros" install` -- with
 `AROS_ROOT` passed explicitly because `sudo` resets `$HOME` and the Makefile
 defaults `AROS_ROOT` to `$HOME/aros`; without it the build looks for AROS
 under `/root` and the install fails before it copies anything.
 
-**One install per machine.** ACE programs find their companions beside their
-own executable, so an install is a set that stays together, and two sets on
-one `PATH` drift apart in the quietest possible way: the older set keeps
+**Two directories, one set.** `$(PREFIX)/lib/ace` holds every ACE program --
+the shell, the console, the broker, the fmm, and all sixty AmigaDOS commands
+-- because each finds its companions beside its own executable. `$(PREFIX)/bin`
+holds symlinks for the five entry points a person types at a Linux prompt:
+`ace-shell`, `ace-brokerctl`, `acepaste`, `broker-start`, `broker-stop`. The
+commands are not among them. `Copy`, `List`, `Type`, `Set`, `Run` and `say`
+belong inside ACE, reached by name through `C:`, and on `PATH` they were
+shadowing host tools and being shadowed by them for no gain. An install over
+an older one removes what that one left in `bin`, naming each file as it goes.
+`/proc/self/exe` resolves a symlink to its target, so a command started through
+`C:` -- or `ace-shell` started through `PATH` -- still finds its companions.
+The desktop launcher and the polkit action name the real binaries in
+`lib/ace`, not the links.
+
+**One install per machine.** An install is a set that stays together, and two
+sets on one `PATH` drift apart in the quietest possible way: the older set keeps
 working, just old, and the newer one is simply never reached. This happened
-here -- a `~/.local/bin` install shadowed `/usr/local/bin`, so a fresh
+here -- a `~/.local` install shadowed `/usr/local`, so a fresh
 `sudo make install` left the panel icon starting the previous build, with no
 symptom beyond a missing command that had only been installed to the root
 nothing was reading. Hence the default prefix, the absolute path in the

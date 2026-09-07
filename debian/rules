@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+export PREFIX = /usr
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) all
+
+override_dh_auto_install:
+	$(MAKE) stage-install DESTDIR=$(CURDIR)/debian/tmp

@@ -1,0 +1,11 @@
+Source: ace-shell
+Section: shells
+Priority: optional
+Maintainer: Ace <ace@localhost>
+Build-Depends: debhelper-compat (= 13), gcc, make, pkg-config, libgtk-3-dev, libblkid-dev, libcairo2-dev, libfontconfig-dev, libwayland-dev, zlib1g-dev
+Standards-Version: 4.6.2
+
+Package: ace-shell
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Ace shell

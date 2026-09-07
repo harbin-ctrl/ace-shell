@@ -59,7 +59,7 @@ WAYLAND_LIBS := $(shell pkg-config --libs wayland-client)
 # `sudo make PREFIX=/usr/local AROS_ROOT="$$HOME/aros" install`, with AROS_ROOT
 # passed explicitly because sudo resets HOME -- but it is deliberately not a
 # target of its own. Nothing should reach it by accident.
-PREFIX ?= $(HOME)/.local
+PREFIX ?= /usr
 # Two directories, and the difference between them is what a Linux user's PATH
 # is allowed to see. PROGDIR holds every ACE program -- the shell, the console,
 # the broker, the fmm, and all sixty AmigaDOS commands -- because each finds
@@ -1688,7 +1688,7 @@ clean-lha:
 # make would consider it up to date whenever data/ace.desktop.in had not
 # changed, and happily install a launcher pointing at the prefix from the
 # previous install.
-install: all tine
+stage-install: all tine
 	$(INSTALL) -d $(DESTDIR)$(PROGDIR)
 	$(RM) $(DESTDIR)$(PROGDIR)/LNX
 	$(INSTALL) -m 0755 $(addprefix $(BUILD)/,$(INSTALL_BINS)) $(DESTDIR)$(PROGDIR)
@@ -1698,9 +1698,6 @@ install: all tine
 	# Piper and its initial voice models are part of the normal per-user ACE
 	# installation. A staged or system-wide install cannot know which user's
 	# home should own the models, so it installs the command set only.
-	@if [ -z "$(DESTDIR)" ] && [ `id -u` -ne 0 ]; then \
-	    "$(PROGDIR)/say-setup"; \
-	fi
 	$(INSTALL) -m 0755 "$(TINE_DIR)/tine" $(DESTDIR)$(PROGDIR)/tine
 	$(INSTALL) -m 0755 broker-start broker-stop $(DESTDIR)$(PROGDIR)
 	# PATH gets the entry points, as symlinks into the set they belong to.
@@ -2127,7 +2124,15 @@ test-say-broker: $(BUILD)/ace-broker $(BUILD)/ace-brokerctl
 test-say-setup:
 	bash tests/say_setup_test.sh
 
-.PHONY: all clean clean-vim clean-regina clean-lha install tine lha lha-fetch regina rexxmast test-broker-shell-lifetime test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-spec test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty test-terminal-translate test-say-broker test-say-setup
+.PHONY: all clean clean-vim clean-regina clean-lha install stage-install deb debs tine lha lha-fetch regina rexxmast test-broker-shell-lifetime test-broker-port-channel test-broker-port-message test-broker-port-abandon test-rexx-port test-rexxmast test-arexx-demos test-regina-arexx install-vim install-regina install-lha vim test-console-device test-console-channel test-console-dispatch test-console-device-bridge test-filesystem-translation test-fmm-crm-channel test-dir-break test-peek test-lha test-file-commands test-relabel test-info test-edit test-dir-sort test-dir-exall-scale test-dir-softlink test-brokerctl-assign test-modes test-device-view test-escalation-contract test-navigation test-deleted-cwd test-tally test-halt test-dir-volume-root test-device-node test-assign-missing-target test-tine test-system-assigns test-aros-exec-runtime test-create-new-proc test-iffparse-clipboard test-acepaste test-clipboard-client test-aros-console-editor test-native-input test-native-console-handle test-exec-compat test-boopsi test-graphics test-prompt-newline test-shell-return-code test-shell-redirection test-lnx-pty test-terminal-translate test-say-broker test-say-setup
+
+deb:
+	@set -euo pipefail; dpkg-checkbuilddeps debian/control; dpkg-buildpackage -b -uc -us
+
+debs: deb
+
+install: deb
+	@set -euo pipefail; package=../ace-shell_$$(dpkg-parsechangelog -SVersion)_$$(dpkg --print-architecture).deb; if [ "$$(id -u)" -eq 0 ]; then apt install -y "$$package"; else sudo apt install -y "$$package"; fi
 AROS_CLIP_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Clip.c
 $(BUILD)/Clip.o: $(AROS_CLIP_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-sign-compare -I$(COMPAT) $(AROS_SHCOMMAND_CFLAGS) -c $< -o $@

@@ -2138,8 +2138,9 @@ deb:
 
 debs: deb
 
+# --reinstall: a rebuild keeps its version, and apt skips an equal version.
 install: deb
-	@set -euo pipefail; package=../ace-shell_$$(dpkg-parsechangelog -SVersion)_$$(dpkg --print-architecture).deb; if [ "$$(id -u)" -eq 0 ]; then apt install -y "$$package"; else sudo apt install -y "$$package"; fi
+	@set -euo pipefail; package=../ace-shell_$$(dpkg-parsechangelog -SVersion)_$$(dpkg --print-architecture).deb; if [ "$$(id -u)" -eq 0 ]; then apt install -y --reinstall "$$package"; else sudo apt install -y --reinstall "$$package"; fi
 AROS_CLIP_SRC := $(AROS_ROOT)/workbench/c/shellcommands/Clip.c
 $(BUILD)/Clip.o: $(AROS_CLIP_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-sign-compare -I$(COMPAT) $(AROS_SHCOMMAND_CFLAGS) -c $< -o $@

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Install Piper and ACE's initial voices for the current user.  The normal
-# per-user `make install` invokes this helper; it is also safe to run again.
+# Install Piper and ACE's initial voices for the current user.  Run once per
+# user after installing the package; it is also safe to run again.
 set -euo pipefail
 BIN="${XDG_DATA_HOME:-$HOME/.local/share}/say"
 VOICES="$BIN/voices"

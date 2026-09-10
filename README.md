@@ -44,34 +44,34 @@ Linux absolute symbolic links keep Linux meaning. If a link on `sda2:` names
 mountpoint paths; use `ace-brokerctl name` first when starting from a Linux
 path.
 
-Install the built commands and console runtime:
+Install as the `ace-shell` Debian package:
 
 ```sh
 make install
 ```
 
-That is the whole install, and it needs no privileges. All installed ACE
-programs share one directory -- `~/.local/lib/ace` -- because each finds its
-companions -- the shell, the console, the broker, the AROS commands -- beside
-its own executable. The desktop launcher is written with that directory's
-absolute path in it, so the icon starts the build that was installed rather
-than whatever PATH happens to find first.
+It builds the package and installs it with apt. All installed ACE programs
+share one directory -- `/usr/lib/ace` -- because each finds its companions --
+the shell, the console, the broker, the AROS commands -- beside its own
+executable. The desktop launcher is written with that directory's absolute
+path in it, so the icon starts the build that was installed rather than
+whatever PATH happens to find first.
 
-`~/.local/bin` gets symlinks for the five entry points a person types at a
-Linux prompt -- `ace-shell`, `ace-brokerctl`, `acepaste`, `broker-start` and
+`/usr/bin` gets symlinks for the five entry points a person types at a Linux
+prompt -- `ace-shell`, `ace-brokerctl`, `acepaste`, `broker-start` and
 `broker-stop` -- and nothing else. `Copy`, `List`, `Type`, `Set`, `Run` and
 `say` are commands inside ACE, reached by name through `C:`; on `PATH` they
-only collided with host tools. An install over an older one removes the copies
-that older one left in `~/.local/bin`, naming each as it goes.
+only collided with host tools. Remove any older per-user install under
+`~/.local` first: it comes earlier on `PATH` and shadows the package.
 
 ### Say
 
-`say` is an ACE command backed by a broker-owned Piper voice server. A normal
-per-user `make install` installs Piper and the initial voice models alongside
-ACE (a staged or system-wide install only installs the command files, because
-it cannot choose a user's home directory):
+`say` is an ACE command backed by a broker-owned Piper voice server. The
+package installs the command files only; Piper and the voice models belong to
+each user, so each user runs `say-setup` once:
 
 ```sh
+/usr/lib/ace/say-setup
 say WARM            # preload the default voice
 say hello there
 say MALE "build finished"
@@ -84,19 +84,9 @@ after two idle hours and terminates every voice server when it exits. Set
 useful for testing). `ace-brokerctl say status` shows the broker-owned voices.
 No systemd user units are installed or used.
 
-A system-wide install is an ordinary `PREFIX` override rather than a target of
-its own:
-
-```sh
-sudo make PREFIX=/usr/local POLKIT_ACTIONDIR=/usr/share/polkit-1/actions \
-  AROS_ROOT="$HOME/aros" install
-```
-
-`AROS_ROOT` has to be passed explicitly there because `sudo` resets `$HOME`.
 Prefer one install per machine: two sets of ACE binaries on one `PATH` drift
 apart silently, since the older set keeps working perfectly well and only the
-newer one stops being reached. `make install` warns when it has just installed
-a copy that `PATH` will not select.
+newer one stops being reached.
 
 ### The optional programs: Vim, Regina and LhA
 

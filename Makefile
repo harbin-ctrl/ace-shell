@@ -1702,9 +1702,9 @@ stage-install: all tine
 	# Say is one command, with two private helpers. The broker starts the
 	# voice-server helper itself; there are deliberately no systemd units.
 	$(INSTALL) -m 0755 data/say/say-voice-server data/say/say-setup $(DESTDIR)$(PROGDIR)
-	# Piper and its initial voice models are part of the normal per-user ACE
-	# installation. A staged or system-wide install cannot know which user's
-	# home should own the models, so it installs the command set only.
+	# Piper and its voice models belong to each user, and say-setup puts them
+	# in that user's home; an install cannot choose a home, so it carries the
+	# command set only.
 	$(INSTALL) -m 0755 "$(TINE_DIR)/tine" $(DESTDIR)$(PROGDIR)/tine
 	$(INSTALL) -m 0755 broker-start broker-stop $(DESTDIR)$(PROGDIR)
 	# PATH gets the entry points, as symlinks into the set they belong to.

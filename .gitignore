@@ -16,3 +16,12 @@ HANDOFF*.md
 README*.md
 export*.txt
 exports*.txt
+
+# dpkg-buildpackage leaves its staging tree and bookkeeping in debian/.
+debian/tmp/
+debian/files
+debian/.debhelper/
+debian/*.substvars
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+debian/ace-shell/

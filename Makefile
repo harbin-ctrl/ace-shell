@@ -1731,7 +1731,7 @@ stage-install: all tine
 	              $(DESTDIR)$(POLKIT_ACTIONDIR)
 	sed 's|@PROGDIR@|$(PROGDIR)|g' data/ace.desktop.in > $(BUILD)/ace.desktop
 	$(INSTALL) -m 0644 $(BUILD)/ace.desktop $(DESTDIR)$(APPLICATIONSDIR)/ace.desktop
-	$(INSTALL) -m 0644 assets/ace.png $(DESTDIR)$(ICONDIR)/ace.png
+	$(INSTALL) -m 0644 assets/ace-shell.png $(DESTDIR)$(ICONDIR)/ace-shell.png
 	sed 's|@PROGDIR@|$(PROGDIR)|g' data/org.ace.Ace.fmm.policy > \
 	              $(BUILD)/org.ace.Ace.fmm.policy
 	$(INSTALL) -m 0644 $(BUILD)/org.ace.Ace.fmm.policy \

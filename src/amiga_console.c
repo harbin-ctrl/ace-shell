@@ -76,7 +76,7 @@ static int font_pixels(int points)
     return pixels > 0 ? pixels : 1;
 }
 #define CONFIG_GROUP "ACE Shell"
-#define ACE_ICON_NAME "ace"
+#define ACE_ICON_NAME "ace-shell"
 #define CONFIG_FONT_FAMILY "font-family"
 #define CONFIG_FONT_SIZE "font-size"
 #define CONFIG_FONT_WEIGHT "font-weight"

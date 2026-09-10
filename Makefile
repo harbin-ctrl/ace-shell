@@ -5,7 +5,12 @@ endif
 # distcc. Both remain overridable for local or cross builds.
 CCACHE_PREFIX ?= distcc
 export CCACHE_PREFIX
-CFLAGS ?= -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-pointer-sign -O2
+CFLAGS ?= -Wall -Wextra -Werror -Wno-unused-parameter -Wno-pointer-sign -O2
+# The sources are C11, and strict C11 also keeps the struct timeval glibc's
+# stdlib.h declares in GNU modes from colliding with the AROS headers' own.
+# `override` so it survives a CFLAGS from the environment, which is how
+# dpkg-buildflags reaches a package build.
+override CFLAGS += -std=c11
 
 # Header dependency tracking.  Without this, editing a header in compat/
 # rebuilds nothing that includes it, because the rules below list only their
@@ -185,6 +190,8 @@ LHA_AROS_INCLUDES := -I$(CURDIR)/config/lha-aros -I$(LHA_AROS_DIR) \
                      -I$(AROS_ROOT)/arch/$(AROS_CPU_ARCH)/include \
                      -I$(AROS_ROOT)/compiler/arossupport/include \
                      -I$(AROS_ROOT)/compiler/include
+# -Wno-format-security beside -Wno-format: Debian's hardening flags add
+# -Werror=format-security, which gcc rejects once -Wformat is off.
 LHA_AROS_CFLAGS := -D_AMIGA -D__AROS__ -DEXPAND_WILDCARDS \
                    -DHAVE_CONFIG_H -D_XOPEN_SOURCE=700 \
                    -Wno-return-mismatch -Wno-unused-parameter \
@@ -194,7 +201,7 @@ LHA_AROS_CFLAGS := -D_AMIGA -D__AROS__ -DEXPAND_WILDCARDS \
                    -Wno-int-conversion -Wno-int-to-pointer-cast \
                    -Wno-sign-compare -Wno-missing-field-initializers \
                    -Wno-strict-aliasing -Wno-maybe-uninitialized \
-                   -Wno-format -Wno-unused-function \
+                   -Wno-format -Wno-format-security -Wno-unused-function \
                    -Wno-implicit-fallthrough \
                    -Wno-dangling-pointer \
                    -Wno-parentheses \
